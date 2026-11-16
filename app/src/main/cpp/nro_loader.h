@@ -17,6 +17,7 @@ enum class NroLoadError : uint8_t {
     CompressedNroUnsupported,
     InvalidSegment,
     AddressOverflow,
+    RelocationFailed,
     MappingFailed,
     CopyFailed,
 };
