@@ -26,6 +26,7 @@ jobs:
             app/src/main/cpp/nro_loader.cpp \
             app/src/main/cpp/nso_loader.cpp \
             app/src/main/cpp/mod0_relocator.cpp \
+            app/src/main/cpp/hipc_cmif.cpp \
             app/src/main/cpp/guest_address_space.cpp \
             app/src/test/cpp/arm64_interpreter_test.cpp \
             -o "$RUNNER_TEMP/astrans-native-tests"

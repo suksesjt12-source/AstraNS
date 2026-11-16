@@ -3,6 +3,7 @@
 #include "nro_loader.h"
 #include "nso_loader.h"
 #include "mod0_relocator.h"
+#include "hipc_cmif.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -324,6 +325,84 @@ int main() {
                              0x200000U, loaded_nro, nro_error) &&
           nro_error == astrans::NroLoadError::CompressedNroUnsupported,
           "NRO loader explicitly rejects compressed images");
+
+    // HIPC header, descriptors, special handles and CMIF command dispatch.
+    std::vector<uint8_t> hipc_request(48U,0U);
+    write_u32_le(hipc_request,0U,6U); // Invoke2Method.
+    write_u32_le(hipc_request,4U,8U); // Eight raw-data words.
+    write_u32_le(hipc_request,16U,0x49434653U); // SFCI.
+    write_u32_le(hipc_request,20U,1U); // Version 1.
+    write_u32_le(hipc_request,24U,7U); // Method id.
+    write_u32_le(hipc_request,28U,0x12345678U); // Token.
+    write_u32_le(hipc_request,32U,0xAABBCCDDU); // First parameter.
+    astrans::HipcMessage parsed_hipc{};
+    astrans::HipcError ipc_error=astrans::HipcError::None;
+    check(astrans::parse_hipc_message(hipc_request.data(),hipc_request.size(),
+                                      parsed_hipc,ipc_error),
+          "parse basic HIPC request");
+    check(parsed_hipc.message_type==6U && parsed_hipc.raw_data_offset==16U &&
+          parsed_hipc.raw_data_size==32U,"decode HIPC message header and raw data range");
+    astrans::CmifRequest parsed_cmif{};
+    check(astrans::parse_cmif_request(hipc_request.data(),hipc_request.size(),
+                                      parsed_hipc,parsed_cmif,ipc_error),
+          "parse CMIF SFCI request header");
+    check(parsed_cmif.version==1U && parsed_cmif.method_id==7U &&
+          parsed_cmif.token==0x12345678U && parsed_cmif.parameter_size==16U,
+          "decode CMIF version, method id, token and parameter length");
+    check(read_u32_le(parsed_cmif.parameters)==0xAABBCCDDU,
+          "CMIF request exposes payload parameters");
+
+    std::vector<uint8_t> special_hipc(64U,0U);
+    const uint32_t special_header=(1U)|(1U<<1U)|(1U<<5U); // PID, one copy handle and one move handle.
+    write_u32_le(special_hipc,0U,6U);
+    write_u32_le(special_hipc,4U,0x80000000U|4U); // Special header, four raw words.
+    write_u32_le(special_hipc,8U,special_header);
+    special_hipc[12U]=0x08U; // Process id 0x1122334455667788 follows at +0xC.
+    special_hipc[13U]=0x07U;
+    special_hipc[14U]=0x06U;
+    special_hipc[15U]=0x05U;
+    special_hipc[16U]=0x04U;
+    special_hipc[17U]=0x03U;
+    special_hipc[18U]=0x02U;
+    special_hipc[19U]=0x01U;
+    write_u32_le(special_hipc,20U,0x11112222U);
+    write_u32_le(special_hipc,24U,0x33334444U);
+    astrans::HipcMessage special_message{};
+    check(astrans::parse_hipc_message(special_hipc.data(),special_hipc.size(),
+                                      special_message,ipc_error),
+          "parse HIPC special header and handle descriptors");
+    check(special_message.has_process_id && special_message.process_id==0x0102030405060708ULL &&
+          special_message.copy_handles.size()==1U && special_message.copy_handles[0]==0x11112222U &&
+          special_message.move_handles.size()==1U && special_message.move_handles[0]==0x33334444U,
+          "HIPC exposes PID, copy handles and move handles");
+
+    std::vector<uint8_t> truncated_hipc(8U,0U);
+    write_u32_le(truncated_hipc,0U,6U|(1U<<16U)); // One pointer descriptor but none present.
+    check(!astrans::parse_hipc_message(truncated_hipc.data(),truncated_hipc.size(),
+                                       special_message,ipc_error) &&
+          ipc_error==astrans::HipcError::TruncatedDescriptors,
+          "HIPC parser rejects truncated pointer descriptor");
+
+    astrans::CmifServiceManager service_manager;
+    check(service_manager.register_service("test:echo",
+          [](const astrans::CmifRequest& request,std::vector<uint8_t>& output) -> uint32_t {
+              if(request.method_id!=7U || request.parameter_size<4U) return 0xF601U;
+              const uint32_t value=read_u32_le(request.parameters)+1U;
+              output.resize(4U);
+              for(unsigned i=0;i<4U;++i) output[i]=static_cast<uint8_t>(value>>(i*8U));
+              return 0U;
+          }),"register CMIF test service");
+    check(service_manager.service_count()==1U,"CMIF service registry count");
+    std::vector<uint8_t> cmif_response;
+    check(service_manager.dispatch("test:echo",parsed_cmif,cmif_response,ipc_error),
+          "dispatch CMIF service command");
+    check(cmif_response.size()==20U && read_u32_le(cmif_response.data())==0x4F434653U &&
+          read_u32_le(cmif_response.data()+8U)==0U &&
+          read_u32_le(cmif_response.data()+16U)==0xAABBCCDEU,
+          "CMIF service emits SFCO reply and result payload");
+    check(!service_manager.dispatch("missing",parsed_cmif,cmif_response,ipc_error) &&
+          ipc_error==astrans::HipcError::ServiceNotFound,
+          "CMIF dispatcher reports unregistered service");
 
     GuestMemory mod0_memory;
     const auto mod0_rwx=MemoryPermission::Read|MemoryPermission::Write|MemoryPermission::Execute;
