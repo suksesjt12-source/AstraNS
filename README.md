@@ -2,16 +2,18 @@
 
 AstraNS is an original Android-first emulator research project. The Android shell is Kotlin; the experimental guest CPU, memory and diagnostic code is C++20.
 
-## Current status: 0.5.0 — guest execution and Vulkan capability probe
+## Current status: 0.6.0 — virtual memory translation and Vulkan capability probe
 
 Implemented:
 - Android application shell and JNI bridge.
-- Page-aligned guest memory regions with overlap checks and independent Read, Write and Execute permissions.
+- Page-aligned guest physical-memory regions with overlap checks and independent Read, Write and Execute permissions.
+- Software guest virtual-address space with 4 KB page mappings, virtual-to-physical translation, read/write/execute permissions, map/unmap/protect operations and multi-page access checks.
+- AArch64 instruction fetch, loads/stores and the CPU run loop can execute through translated virtual addresses.
 - Checked guest-memory access and little-endian 32/64-bit reads and writes.
 - A bounded fetch/decode/execute loop with instruction budget and deterministic stop-address support.
 - Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate with basic NZCV flags; unsigned-immediate integer LDR/STR; B, BL, B.cond and RET.
 - Native Vulkan probe that creates a Vulkan instance and reports physical GPU names, device type, API version, device-local heap size, queue capabilities and swapchain-extension availability.
-- Host tests for memory mapping, access permissions, register operations, loads/stores, branches, instruction budgets and faults.
+- Host tests for physical memory, virtual mappings and aliases, permission enforcement, cross-page access, failed boundary writes, translated instruction fetch, registers, branches, instruction budgets and memory faults.
 - GitHub Actions that run native tests before building and uploading an arm64-v8a debug APK.
 
 ## Important limitations
@@ -19,7 +21,7 @@ Implemented:
 **AstraNS is not yet a Nintendo Switch emulator and cannot run Hollow Knight or other Switch games.** The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
 
 Not implemented:
-- Full ARMv8-A instruction coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, page tables or JIT.
+- Full ARMv8-A coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, hardware-format ARM translation tables/TLB and JIT. The current software page map is not an ARM hardware MMU.
 - Switch boot process, kernel and system services, IPC, filesystem interfaces or required runtime libraries.
 - Tegra X1 GPU command processor, Maxwell features, shader translation or Vulkan renderer.
 - Audio, controller input, title loader, save data or commercial game compatibility.
@@ -63,12 +65,12 @@ g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
 
 ## Roadmap toward compatibility
 
-1. Complete more of ARMv8-A, including SIMD/NEON, atomics, exceptions and exact architectural edge cases.
-2. Build proper address translation, page tables, MMU permissions, exception levels and interrupt state.
-3. Implement a Switch-like kernel/service and IPC compatibility layer from public, lawful specifications.
-4. Use the Vulkan probe results to build a GPU command-translation and shader pipeline.
+1. Expand architectural correctness and implement ARM translation-table descriptors, TLB behaviour, exception levels and interrupt state.
+2. Add SIMD/NEON, floating-point, atomics and a validated CPU execution/JIT backend.
+3. Implement the Switch boot path and system-service/IPC compatibility layer from public, lawful specifications.
+4. Build Tegra X1 GPU command translation, shader translation and a Vulkan renderer.
 5. Add filesystem, audio, controller, timing and save-state systems.
-6. Test boot and compatibility with software the user is legally authorized to use; only then assess individual game support.
+6. Validate boot and compatibility with software the user is legally authorized to use; only then assess individual game support.
 
 ## Legal scope
 

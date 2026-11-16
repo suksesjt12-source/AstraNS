@@ -67,8 +67,13 @@ enum class StepResult {
     StepLimitReached,
 };
 
+class GuestAddressSpace;
+
 StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction);
+StepResult execute_one(CpuState& cpu, GuestAddressSpace& memory, uint32_t instruction);
 StepResult run(CpuState& cpu, GuestMemory& memory, uint64_t max_steps,
+               uint64_t stop_address = UINT64_MAX);
+StepResult run(CpuState& cpu, GuestAddressSpace& memory, uint64_t max_steps,
                uint64_t stop_address = UINT64_MAX);
 int run_self_test();
 

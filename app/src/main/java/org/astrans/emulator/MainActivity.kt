@@ -38,7 +38,7 @@ class MainActivity : Activity() {
         val result = runCatching { nativeRunSelfTest() }
         val testText = result.fold(
             onSuccess = { value ->
-                if (value == 12) "Guest memory + AArch64 execution: PASS (program returned $value)"
+                if (value == 12) "Guest memory + virtual-MMU AArch64 execution: PASS (program returned $value)"
                 else "Guest execution test: FAIL (result = $value)"
             },
             onFailure = { "Native core error: ${it.message}" }
@@ -51,12 +51,12 @@ class MainActivity : Activity() {
         root.addView(label(gpuInfo, 12f, Color.rgb(190, 205, 225)))
 
         root.addView(label(
-            "Milestone 0.5: mapped guest memory, bounded AArch64 execution and Vulkan capability probe. " +
+            "Milestone 0.6: virtual-address translation, bounded AArch64 execution and Vulkan capability probe. " +
                 "This is not yet a Nintendo Switch emulator and cannot run commercial games.",
             13f, Color.LTGRAY
         ))
         root.addView(label(
-            "Next: ARM MMU/page tables, SIMD/NEON, Switch system services and a GPU translation backend.",
+            "The current MMU is a software page map; ARM translation-table hardware, SIMD/NEON, Switch services and GPU translation remain future work.",
             12f, Color.rgb(160, 180, 210)
         ))
         setContentView(root)

@@ -1,4 +1,5 @@
 #include "arm64_interpreter.h"
+#include "guest_address_space.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -102,6 +103,55 @@ int main() {
     check(execute_one(bad, memory, 0xFFFFFFFFU) == StepResult::Unsupported, "unknown opcode rejected");
     check(astrans::run_self_test() == 12, "integrated guest program passes");
 
-    std::cout << "AstraNS mapped guest memory + AArch64 tests: PASS\n";
+    GuestMemory physical;
+    const auto physical_rwx = MemoryPermission::Read | MemoryPermission::Write | MemoryPermission::Execute;
+    check(physical.map(0x8000U, GuestMemory::kPageSize * 3U, physical_rwx), "map physical pages");
+    GuestAddressSpace address_space(physical);
+    const auto virtual_rw = MemoryPermission::Read | MemoryPermission::Write;
+    check(address_space.map(0x400000U, 0x8000U, GuestMemory::kPageSize * 2U, virtual_rw), "map virtual pages");
+    check(!address_space.map(0x400000U, 0xA000U, GuestMemory::kPageSize, virtual_rw), "reject virtual overlap");
+    check(address_space.size() == GuestMemory::kPageSize * 2U, "count mapped virtual pages");
+    check(address_space.write64(0x400FFCU, 0xA1B2C3D4E5F60718ULL), "write across page boundary");
+    uint64_t alias_value = 0;
+    check(address_space.read64(0x400FFCU, alias_value) && alias_value == 0xA1B2C3D4E5F60718ULL,
+          "read across page boundary");
+    check(address_space.map(0x500000U, 0x8000U, GuestMemory::kPageSize * 2U, MemoryPermission::Read),
+          "map read-only alias");
+    check(address_space.read64(0x500FFCU, alias_value) && alias_value == 0xA1B2C3D4E5F60718ULL,
+          "alias sees same physical bytes");
+    check(!address_space.write32(0x500000U, 9U), "read-only mapping blocks writes");
+    uint64_t translated = 0;
+    check(address_space.translate(0x400123U, MemoryPermission::Read, translated) && translated == 0x8123U,
+          "virtual-to-physical translation");
+    check(!address_space.translate(0x400123U, MemoryPermission::Execute, translated),
+          "translation enforces execute permission");
+    check(address_space.protect(0x400000U, GuestMemory::kPageSize, MemoryPermission::Read),
+          "protect virtual page");
+    check(!address_space.write32(0x400010U, 99U), "protected page blocks writes");
+    check(address_space.unmap(0x400000U, GuestMemory::kPageSize), "unmap virtual page");
+    check(!address_space.read32(0x400010U, fetched), "unmapped virtual page faults");
+
+    check(address_space.map(0x600000U, 0xA000U, GuestMemory::kPageSize,
+          MemoryPermission::Read | MemoryPermission::Execute), "map executable virtual page");
+    check(physical.write32(0xA000U, 0xD28000E0U), "write guest MOVZ instruction");
+    check(address_space.fetch32(0x600000U, fetched) && fetched == 0xD28000E0U,
+          "instruction fetch uses virtual translation");
+    CpuState virtual_cpu{};
+    virtual_cpu.pc = 0x600000U;
+    check(run(virtual_cpu, address_space, 2U, 0x600004U) == StepResult::StopAddressReached,
+          "CPU run loop executes through virtual memory");
+    check(virtual_cpu.x[0] == 7U, "virtual instruction updates CPU register");
+
+    check(address_space.map(0x700000U, 0x8000U, GuestMemory::kPageSize, virtual_rw),
+          "map page for fault-atomicity test");
+    check(address_space.write32(0x700FFCU, 0x11223344U), "initialize last word in page");
+    check(!address_space.write64(0x700FFCU, 0xFFEEDDCCBBAA9988ULL),
+          "cross-page write faults on unmapped next page");
+    check(address_space.read32(0x700FFCU, fetched) && fetched == 0x11223344U,
+          "failed cross-page write leaves old data intact");
+    check(!address_space.unmap(0x700000U, GuestMemory::kPageSize * 2U),
+          "unmap rejects partially unmapped range");
+
+    std::cout << "AstraNS guest memory + virtual MMU + AArch64 tests: PASS\n";
     return EXIT_SUCCESS;
 }

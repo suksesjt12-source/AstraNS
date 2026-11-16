@@ -1,4 +1,5 @@
 #include "arm64_interpreter.h"
+#include "guest_address_space.h"
 
 #include <cstring>
 
@@ -202,7 +203,8 @@ void set_nz(CpuState& cpu, uint64_t value, bool is_64_bit) {
 
 }  // namespace
 
-StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction) {
+template <typename Memory>
+StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction) {
     const uint64_t old_pc = cpu.pc;
 
     if (instruction == 0xD503201FU) {
@@ -319,19 +321,38 @@ StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction)
     return StepResult::Unsupported;
 }
 
-StepResult run(CpuState& cpu, GuestMemory& memory, uint64_t max_steps,
-               uint64_t stop_address) {
+StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction) {
+    return execute_one_impl(cpu, memory, instruction);
+}
+
+StepResult execute_one(CpuState& cpu, GuestAddressSpace& memory, uint32_t instruction) {
+    return execute_one_impl(cpu, memory, instruction);
+}
+
+template <typename Memory>
+StepResult run_impl(CpuState& cpu, Memory& memory, uint64_t max_steps,
+                    uint64_t stop_address) {
     uint64_t steps = 0;
     while (steps < max_steps) {
         if (cpu.pc == stop_address) return StepResult::StopAddressReached;
         uint32_t instruction = 0;
         if (!memory.fetch32(cpu.pc, instruction)) return StepResult::MemoryFault;
-        const StepResult result = execute_one(cpu, memory, instruction);
+        const StepResult result = execute_one_impl(cpu, memory, instruction);
         if (result != StepResult::Executed) return result;
         ++steps;
         ++cpu.instructions_executed;
     }
     return StepResult::StepLimitReached;
+}
+
+StepResult run(CpuState& cpu, GuestMemory& memory, uint64_t max_steps,
+               uint64_t stop_address) {
+    return run_impl(cpu, memory, max_steps, stop_address);
+}
+
+StepResult run(CpuState& cpu, GuestAddressSpace& memory, uint64_t max_steps,
+               uint64_t stop_address) {
+    return run_impl(cpu, memory, max_steps, stop_address);
 }
 
 int run_self_test() {
@@ -370,6 +391,22 @@ int run_self_test() {
         cpu.instructions_executed != 8U || !memory_ok || stored != 12U) {
         return -1;
     }
+    GuestMemory physical_memory;
+    const MemoryPermission physical_permissions =
+        MemoryPermission::Read | MemoryPermission::Write | MemoryPermission::Execute;
+    if (!physical_memory.map(0x8000U, GuestMemory::kPageSize, physical_permissions))
+        return -1;
+    if (!physical_memory.write32(0x8000U, 0xD28000E0U)) return -1;
+    GuestAddressSpace address_space(physical_memory);
+    const MemoryPermission virtual_code_permissions =
+        MemoryPermission::Read | MemoryPermission::Execute;
+    if (!address_space.map(0x600000U, 0x8000U, GuestMemory::kPageSize,
+                           virtual_code_permissions)) return -1;
+    CpuState virtual_cpu{};
+    virtual_cpu.pc = 0x600000U;
+    if (run(virtual_cpu, address_space, 2U, 0x600004U) != StepResult::StopAddressReached ||
+        virtual_cpu.x[0] != 7U) return -1;
+
     return 12;
 }
 
