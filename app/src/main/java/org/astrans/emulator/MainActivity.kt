@@ -71,7 +71,7 @@ class MainActivity : Activity() {
         brand.addView(label("AstraNS", 20f, white, true))
         brand.addView(label("SWITCH EMULATOR WORKSPACE", 9f, muted, true))
         header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(label("1.1", 11f, muted, true).apply {
+        header.addView(label("1.2", 11f, muted, true).apply {
             background = rounded(raised, 18)
             setPadding(dp(12), dp(7), dp(12), dp(7))
         })

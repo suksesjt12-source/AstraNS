@@ -2,6 +2,7 @@
 #include "guest_address_space.h"
 #include "nro_loader.h"
 #include "nso_loader.h"
+#include "mod0_relocator.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -314,6 +315,59 @@ int main() {
                              0x200000U, loaded_nro, nro_error) &&
           nro_error == astrans::NroLoadError::CompressedNroUnsupported,
           "NRO loader explicitly rejects compressed images");
+
+    GuestMemory mod0_memory;
+    const auto mod0_rwx=MemoryPermission::Read|MemoryPermission::Write|MemoryPermission::Execute;
+    check(mod0_memory.map(0x600000U,GuestMemory::kPageSize*4U,mod0_rwx),
+          "map synthetic MOD0 image");
+    check(mod0_memory.write32(0x600004U,0xFCU),"write MOD0 relative pointer");
+    const uint64_t mod0_address=0x600100U;
+    const char mod0_magic[]={'M','O','D','0'};
+    check(mod0_memory.write(mod0_address,mod0_magic,sizeof(mod0_magic)),"write MOD0 magic");
+    check(mod0_memory.write32(mod0_address+4U,0x200U),"write MOD0 dynamic-section offset");
+    check(mod0_memory.write32(mod0_address+8U,0x2F00U),"write MOD0 BSS start");
+    check(mod0_memory.write32(mod0_address+12U,0x3000U),"write MOD0 BSS end");
+    auto write_dynamic=[&](uint64_t address,uint64_t tag,uint64_t value) {
+        return mod0_memory.write64(address,tag)&&mod0_memory.write64(address+8U,value);
+    };
+    const uint64_t dynamic=0x600300U;
+    check(write_dynamic(dynamic,7U,0x400U),"write DT_RELA pointer");
+    check(write_dynamic(dynamic+16U,8U,24U),"write DT_RELASZ");
+    check(write_dynamic(dynamic+32U,9U,24U),"write DT_RELAENT");
+    check(write_dynamic(dynamic+48U,36U,0x500U),"write DT_RELR pointer");
+    check(write_dynamic(dynamic+64U,35U,8U),"write DT_RELRSZ");
+    check(write_dynamic(dynamic+80U,37U,8U),"write DT_RELRENT");
+    check(write_dynamic(dynamic+96U,0U,0U),"write DT_NULL");
+    check(mod0_memory.write64(0x600400U,0x2000U),"write RELA target offset");
+    check(mod0_memory.write64(0x600408U,1027U),"write R_AARCH64_RELATIVE info");
+    check(mod0_memory.write64(0x600410U,0x1234U),"write RELA addend");
+    check(mod0_memory.write64(0x600500U,0x2008U),"write RELR direct entry");
+    check(mod0_memory.write64(0x602000U,0U),"zero RELA target");
+    check(mod0_memory.write64(0x602008U,0x1000U),"initialize RELR target");
+    std::array<uint8_t,0x100> bss_pattern{};
+    bss_pattern.fill(0xABU);
+    check(mod0_memory.write(0x602F00U,bss_pattern.data(),bss_pattern.size()),
+          "initialize BSS bytes before MOD0");
+    astrans::Mod0Error mod0_error=astrans::Mod0Error::None;
+    check(astrans::apply_mod0_relative_relocations(mod0_memory,0x600000U,
+          GuestMemory::kPageSize*4U,GuestMemory::kPageSize,mod0_error),
+          "apply MOD0 relative relocations");
+    check(mod0_error==astrans::Mod0Error::None,"MOD0 relocation status");
+    check(mod0_memory.read64(0x602000U,memory_value)&&memory_value==0x601234U,
+          "RELA adds image base to signed addend");
+    check(mod0_memory.read64(0x602008U,memory_value)&&memory_value==0x601000U,
+          "RELR direct entry relocates target");
+    check(mod0_memory.read64(0x602F00U,memory_value)&&memory_value==0U,
+          "MOD0 clears BSS");
+    GuestMemory no_mod0_memory;
+    check(no_mod0_memory.map(0x700000U,GuestMemory::kPageSize,
+                             MemoryPermission::Read|MemoryPermission::Execute),
+          "map image without MOD0");
+    check(no_mod0_memory.write32(0x700004U,0U),"write no-MOD0 pointer");
+    check(astrans::apply_mod0_relative_relocations(no_mod0_memory,0x700000U,
+          GuestMemory::kPageSize,GuestMemory::kPageSize,mod0_error)&&
+          mod0_error==astrans::Mod0Error::NoModuleHeader,
+          "image without MOD0 is reported separately");
 
     std::vector<uint8_t> nso_file(0x2114U,0U);
     nso_file[0]='N'; nso_file[1]='S'; nso_file[2]='O'; nso_file[3]='0';
