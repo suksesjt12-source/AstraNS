@@ -5,6 +5,28 @@
 #include <iostream>
 
 namespace {
+
+uint32_t encode_add_sub_shifted(bool sf, bool subtract, bool set_flags,
+                                 unsigned shift, unsigned rm, unsigned amount,
+                                 unsigned rn, unsigned rd) {
+    return (static_cast<uint32_t>(sf) << 31U) |
+           (static_cast<uint32_t>(subtract) << 30U) |
+           (static_cast<uint32_t>(set_flags) << 29U) | 0x0B000000U |
+           (shift << 22U) | (rm << 16U) | (amount << 10U) |
+           (rn << 5U) | rd;
+}
+uint32_t encode_logical_shifted(bool sf, unsigned opc, bool invert,
+                                unsigned shift, unsigned rm, unsigned amount,
+                                unsigned rn, unsigned rd) {
+    return (static_cast<uint32_t>(sf) << 31U) | (opc << 29U) |
+           0x0A000000U | (static_cast<uint32_t>(invert) << 21U) |
+           (shift << 22U) | (rm << 16U) | (amount << 10U) |
+           (rn << 5U) | rd;
+}
+uint32_t encode_csel(bool sf, unsigned rm, unsigned condition, unsigned rn, unsigned rd) {
+    return (static_cast<uint32_t>(sf) << 31U) | 0x1A800000U |
+           (rm << 16U) | (condition << 12U) | (rn << 5U) | rd;
+}
 void check(bool condition, const char* message) {
     if (!condition) {
         std::cerr << "FAIL: " << message << '\n';
@@ -102,6 +124,64 @@ int main() {
     CpuState bad{};
     bad.pc = 0x1000U;
     check(execute_one(bad, memory, 0xFFFFFFFFU) == StepResult::Unsupported, "unknown opcode rejected");
+    CpuState register_alu{};
+    register_alu.pc = 0x1300U;
+    register_alu.x[1] = 5U;
+    register_alu.x[2] = 3U;
+    check(execute_one(register_alu, memory,
+          encode_add_sub_shifted(true, false, false, 0U, 2U, 2U, 1U, 3U)) == StepResult::Executed,
+          "ADD X3, X1, X2, LSL #2");
+    check(register_alu.x[3] == 17U, "shifted ADD result");
+    check(execute_one(register_alu, memory,
+          encode_add_sub_shifted(true, true, true, 0U, 1U, 0U, 3U, 4U)) == StepResult::Executed,
+          "SUBS X4, X3, X1");
+    check(register_alu.x[4] == 12U && register_alu.c && !register_alu.z && !register_alu.v,
+          "shifted SUBS result and flags");
+    check(execute_one(register_alu, memory,
+          encode_logical_shifted(true, 1U, false, 0U, 2U, 0U, 1U, 5U)) == StepResult::Executed,
+          "ORR X5, X1, X2");
+    check(register_alu.x[5] == 7U, "ORR logical result");
+    check(execute_one(register_alu, memory,
+          encode_logical_shifted(true, 2U, false, 0U, 2U, 0U, 3U, 6U)) == StepResult::Executed,
+          "EOR X6, X3, X2");
+    check(register_alu.x[6] == 18U, "EOR logical result");
+    check(execute_one(register_alu, memory,
+          encode_logical_shifted(true, 3U, false, 0U, 2U, 0U, 1U, 7U)) == StepResult::Executed,
+          "ANDS X7, X1, X2");
+    check(register_alu.x[7] == 1U && !register_alu.z && !register_alu.c && !register_alu.v,
+          "ANDS updates NZCV");
+    check(execute_one(register_alu, memory,
+          encode_add_sub_shifted(true, true, true, 0U, 1U, 0U, 1U, 31U)) == StepResult::Executed,
+          "CMP register alias");
+    check(register_alu.z && register_alu.c, "CMP sets zero and carry");
+    check(execute_one(register_alu, memory,
+          encode_csel(true, 2U, 0U, 1U, 8U)) == StepResult::Executed,
+          "CSEL EQ");
+    check(register_alu.x[8] == 5U, "CSEL chooses first operand when condition holds");
+    check(execute_one(register_alu, memory,
+          encode_csel(true, 2U, 1U, 1U, 9U)) == StepResult::Executed,
+          "CSEL NE");
+    check(register_alu.x[9] == 3U, "CSEL chooses second operand when condition fails");
+
+    CpuState shifts{};
+    shifts.pc = 0x1400U;
+    shifts.x[1] = 0x8000000000000000ULL;
+    check(execute_one(shifts, memory,
+          encode_logical_shifted(true, 1U, false, 2U, 1U, 1U, 1U, 2U)) == StepResult::Executed,
+          "ORR with ASR-shifted register");
+    check(shifts.x[2] == 0xC000000000000000ULL, "ASR preserves sign bit");
+    check(execute_one(shifts, memory,
+          encode_logical_shifted(true, 1U, false, 1U, 1U, 1U, 31U, 3U)) == StepResult::Executed,
+          "ORR with LSR-shifted register and XZR");
+    check(shifts.x[3] == 0x4000000000000000ULL, "LSR inserts zero at high bit");
+    check(execute_one(shifts, memory,
+          encode_logical_shifted(true, 1U, false, 3U, 1U, 1U, 31U, 4U)) == StepResult::Executed,
+          "ORR with ROR-shifted register");
+    check(shifts.x[4] == 0x4000000000000000ULL, "ROR rotates across register width");
+    check(execute_one(shifts, memory,
+          encode_add_sub_shifted(false, false, false, 0U, 1U, 32U, 1U, 0U)) ==
+          StepResult::InvalidEncoding, "32-bit shifted ADD rejects shift amounts >= 32");
+
     check(astrans::run_self_test() == 12, "integrated guest program passes");
 
     GuestMemory physical;

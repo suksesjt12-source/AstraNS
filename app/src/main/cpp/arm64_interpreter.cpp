@@ -201,6 +201,44 @@ void set_nz(CpuState& cpu, uint64_t value, bool is_64_bit) {
     cpu.z = masked == 0;
 }
 
+
+uint64_t shift_operand(uint64_t value, unsigned shift_type,
+                       unsigned amount, bool is_64_bit) {
+    const unsigned width = is_64_bit ? 64U : 32U;
+    const uint64_t mask = is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL;
+    value &= mask;
+    if (amount == 0U) return value;
+    switch (shift_type) {
+        case 0U: return (value << amount) & mask;  // LSL
+        case 1U: return value >> amount;            // LSR
+        case 2U: {                                  // ASR
+            const uint64_t sign = uint64_t{1} << (width - 1U);
+            uint64_t result = value >> amount;
+            if ((value & sign) != 0U) result |= (mask << (width - amount)) & mask;
+            return result & mask;
+        }
+        case 3U: {                                  // ROR
+            const unsigned rotation = amount % width;
+            if (rotation == 0U) return value;
+            return ((value >> rotation) | (value << (width - rotation))) & mask;
+        }
+        default: return 0U;
+    }
+}
+
+void set_add_sub_flags(CpuState& cpu, uint64_t lhs, uint64_t rhs,
+                       uint64_t result, bool is_64_bit, bool subtract) {
+    const uint64_t sign = is_64_bit ? (uint64_t{1} << 63U) : (uint64_t{1} << 31U);
+    set_nz(cpu, result, is_64_bit);
+    if (subtract) {
+        cpu.c = lhs >= rhs;
+        cpu.v = ((lhs ^ rhs) & (lhs ^ result) & sign) != 0U;
+    } else {
+        cpu.c = result < lhs;
+        cpu.v = ((~(lhs ^ rhs)) & (lhs ^ result) & sign) != 0U;
+    }
+}
+
 }  // namespace
 
 template <typename Memory>
@@ -237,6 +275,76 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
+
+    // Data-processing (register): ADD/SUB with shifted register operand.
+    if ((instruction & 0x1F200000U) == 0x0B000000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const bool subtract = (instruction & 0x40000000U) != 0U;
+        const bool set_flags = (instruction & 0x20000000U) != 0U;
+        const unsigned shift_type = (instruction >> 22U) & 0x3U;
+        const unsigned rm = (instruction >> 16U) & 0x1FU;
+        const unsigned amount = (instruction >> 10U) & 0x3FU;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rd = instruction & 0x1FU;
+        if (shift_type == 3U || (!is_64_bit && amount >= 32U))
+            return StepResult::InvalidEncoding;
+        const uint64_t mask = is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL;
+        const uint64_t lhs = read_reg(cpu, rn, false) & mask;
+        const uint64_t rhs = shift_operand(read_reg(cpu, rm, false), shift_type, amount, is_64_bit);
+        const uint64_t result = (subtract ? lhs - rhs : lhs + rhs) & mask;
+        write_reg(cpu, rd, result, is_64_bit, false);
+        if (set_flags) set_add_sub_flags(cpu, lhs, rhs, result, is_64_bit, subtract);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
+    // Logical shifted-register instructions: AND, ORR, EOR and ANDS.
+    if ((instruction & 0x1F000000U) == 0x0A000000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const unsigned opc = (instruction >> 29U) & 0x3U;
+        const unsigned shift_type = (instruction >> 22U) & 0x3U;
+        const bool invert = (instruction & 0x00200000U) != 0U;
+        const unsigned rm = (instruction >> 16U) & 0x1FU;
+        const unsigned amount = (instruction >> 10U) & 0x3FU;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rd = instruction & 0x1FU;
+        if (!is_64_bit && amount >= 32U) return StepResult::InvalidEncoding;
+        const uint64_t mask = is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL;
+        const uint64_t lhs = read_reg(cpu, rn, false) & mask;
+        uint64_t rhs = shift_operand(read_reg(cpu, rm, false), shift_type, amount, is_64_bit);
+        if (invert) rhs = (~rhs) & mask;
+        uint64_t result = 0U;
+        switch (opc) {
+            case 0U: result = lhs & rhs; break;
+            case 1U: result = lhs | rhs; break;
+            case 2U: result = lhs ^ rhs; break;
+            case 3U: result = lhs & rhs; break;
+            default: return StepResult::InvalidEncoding;
+        }
+        result &= mask;
+        write_reg(cpu, rd, result, is_64_bit, false);
+        if (opc == 3U) {
+            set_nz(cpu, result, is_64_bit);
+            cpu.c = false;
+            cpu.v = false;
+        }
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
+    // CSEL. CSINC/CSINV/CSNEG remain unsupported until separately implemented.
+    if ((instruction & 0x7FE00C00U) == 0x1A800000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const unsigned rm = (instruction >> 16U) & 0x1FU;
+        const unsigned condition = (instruction >> 12U) & 0xFU;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rd = instruction & 0x1FU;
+        const unsigned selected_reg = condition_holds(cpu, condition) ? rn : rm;
+        write_reg(cpu, rd, read_reg(cpu, selected_reg, false), is_64_bit, false);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
     if ((instruction & 0x1F000000U) == 0x11000000U) {
         const bool is_64_bit = (instruction & 0x80000000U) != 0;
         const bool subtract = (instruction & 0x40000000U) != 0;
@@ -251,16 +359,7 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         const uint64_t result = subtract ? (lhs - rhs) & width_mask : (lhs + rhs) & width_mask;
         write_reg(cpu, rd, result, is_64_bit, !set_flags);
         if (set_flags) {
-            set_nz(cpu, result, is_64_bit);
-            if (subtract) {
-                cpu.c = lhs >= rhs;
-                const uint64_t sign = is_64_bit ? (uint64_t{1} << 63U) : (uint64_t{1} << 31U);
-                cpu.v = (((lhs ^ rhs) & (lhs ^ result) & sign) != 0);
-            } else {
-                cpu.c = result < lhs;
-                const uint64_t sign = is_64_bit ? (uint64_t{1} << 63U) : (uint64_t{1} << 31U);
-                cpu.v = (((~(lhs ^ rhs)) & (lhs ^ result) & sign) != 0);
-            }
+            set_add_sub_flags(cpu, lhs, rhs, result, is_64_bit, subtract);
         }
         cpu.pc += 4U;
         return StepResult::Executed;
