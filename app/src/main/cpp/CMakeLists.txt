@@ -3,6 +3,7 @@ project(astrans_core LANGUAGES CXX)
 
 add_library(astrans_core SHARED
     arm64_interpreter.cpp
+    nro_loader.cpp
     guest_address_space.cpp
     jni_bridge.cpp
     vulkan_probe.cpp

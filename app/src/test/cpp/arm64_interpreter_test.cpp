@@ -1,5 +1,6 @@
 #include "arm64_interpreter.h"
 #include "guest_address_space.h"
+#include "nro_loader.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -57,6 +58,12 @@ uint32_t encode_adr(bool page_relative, int64_t immediate, unsigned rd) {
     return (page_relative ? 0x90000000U : 0x10000000U) |
            (static_cast<uint32_t>((imm & 0x3U) << 29U)) |
            (static_cast<uint32_t>(((imm >> 2U) & 0x7FFFFU) << 5U)) | rd;
+}
+void write_u32_le(std::vector<uint8_t>& data, std::size_t offset, uint32_t value) {
+    data[offset] = static_cast<uint8_t>(value);
+    data[offset + 1U] = static_cast<uint8_t>(value >> 8U);
+    data[offset + 2U] = static_cast<uint8_t>(value >> 16U);
+    data[offset + 3U] = static_cast<uint8_t>(value >> 24U);
 }
 uint32_t encode_madd(bool sf, bool subtract, unsigned rm, unsigned ra,
                      unsigned rn, unsigned rd) {
@@ -236,6 +243,56 @@ int main() {
     check(execute_one(shifts, memory,
           encode_add_sub_shifted(false, false, false, 0U, 1U, 32U, 1U, 0U)) ==
           StepResult::InvalidEncoding, "32-bit shifted ADD rejects shift amounts >= 32");
+
+    std::vector<uint8_t> nro_file(0x3000U, 0U);
+    nro_file[0x10U] = 'N'; nro_file[0x11U] = 'R';
+    nro_file[0x12U] = 'O'; nro_file[0x13U] = '0';
+    write_u32_le(nro_file, 0x18U, 0x3000U);
+    write_u32_le(nro_file, 0x20U, 0x0000U);
+    write_u32_le(nro_file, 0x24U, 0x1000U);
+    write_u32_le(nro_file, 0x28U, 0x1000U);
+    write_u32_le(nro_file, 0x2CU, 0x1000U);
+    write_u32_le(nro_file, 0x30U, 0x2000U);
+    write_u32_le(nro_file, 0x34U, 0x1000U);
+    write_u32_le(nro_file, 0x38U, 0x80U);
+    write_u32_le(nro_file, 0x00U, 0x14000020U); // Entry stub branches past NRO header.
+    nro_file[0x1000U] = 0xA5U;
+    nro_file[0x2000U] = 0x5AU;
+    GuestMemory nro_memory;
+    astrans::LoadedNro loaded_nro{};
+    astrans::NroLoadError nro_error = astrans::NroLoadError::None;
+    check(astrans::load_nro(nro_memory, nro_file.data(), nro_file.size(),
+                            0x100000U, loaded_nro, nro_error),
+          "load valid uncompressed NRO image");
+    check(nro_error == astrans::NroLoadError::None, "NRO load error state is clear");
+    check(loaded_nro.entry_point == 0x100000U && loaded_nro.bss_start == 0x103000U &&
+          loaded_nro.bss_size == 0x80U, "NRO entry point and BSS boundaries");
+    check(nro_memory.fetch32(0x100000U, fetched) && fetched == 0x14000020U,
+          "NRO text segment is executable");
+    check(nro_memory.read(0x101000U, &fetched, 1U) && (fetched & 0xFFU) == 0xA5U,
+          "NRO rodata bytes are mapped");
+    check(!nro_memory.write32(0x101000U, 0U), "NRO rodata is read-only after load");
+    check(nro_memory.read(0x102000U, &fetched, 1U) && (fetched & 0xFFU) == 0x5AU,
+          "NRO data bytes are copied");
+    check(nro_memory.write32(0x102000U, 0x12345678U), "NRO data remains writable");
+    uint64_t bss_zero = 1U;
+    check(nro_memory.read64(0x103000U, bss_zero) && bss_zero == 0U,
+          "NRO BSS is zero-initialized");
+    check(!nro_memory.write32(0x100000U, 0U), "NRO text is read-execute after load");
+
+    std::vector<uint8_t> invalid_nro = nro_file;
+    invalid_nro[0x10U] = 'X';
+    GuestMemory invalid_memory;
+    check(!astrans::load_nro(invalid_memory, invalid_nro.data(), invalid_nro.size(),
+                             0x200000U, loaded_nro, nro_error) &&
+          nro_error == astrans::NroLoadError::BadMagic,
+          "NRO loader rejects incorrect magic without mapping memory");
+    std::vector<uint8_t> compressed_nro = nro_file;
+    write_u32_le(compressed_nro, 0x1CU, 1U << 1U);
+    check(!astrans::load_nro(invalid_memory, compressed_nro.data(), compressed_nro.size(),
+                             0x200000U, loaded_nro, nro_error) &&
+          nro_error == astrans::NroLoadError::CompressedNroUnsupported,
+          "NRO loader explicitly rejects compressed images");
 
     CpuState multiply_cpu{};
     multiply_cpu.pc = 0x1780U;

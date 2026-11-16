@@ -16,12 +16,12 @@ Implemented:
 - A bounded fetch/decode/execute loop with instruction budget and deterministic stop-address support.
 - Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADR/ADRP; ADD/SUB immediate, shifted-register and extended-register forms with NZCV flags; AND/ORR/EOR/ANDS shifted-register and bitmask-immediate forms; CSEL; unsigned-immediate integer LDR/STR with signed/unsigned byte, halfword and word loads; MADD/MSUB/MUL; GPR LDP/STP/LDPSW pair operations with offset/pre/post addressing; B, BL, B.cond, CBZ/CBNZ, TBZ/TBNZ, BR, BLR and RET.
 - Native Vulkan probe that creates a Vulkan instance and reports physical GPU names, device type, API version, device-local heap size, queue capabilities and swapchain-extension availability.
-- Host tests for physical memory, virtual mappings and aliases, permission enforcement, cross-page access, failed boundary writes, translated instruction fetch, shifted and immediate logical operations, CSEL, MADD/MSUB/MUL, signed and unsigned loads, pair loads/stores and writeback, PC-relative address generation, extended operands, conditional/test-bit branches, indirect calls, flags, instruction budgets and memory faults.
+- Host tests for NRO validation/loading, segment permissions, BSS zero-fill, physical memory, virtual mappings and aliases, permission enforcement, cross-page access, failed boundary writes, translated instruction fetch, shifted and immediate logical operations, CSEL, MADD/MSUB/MUL, signed and unsigned loads, pair loads/stores and writeback, PC-relative address generation, extended operands, conditional/test-bit branches, indirect calls, flags, instruction budgets and memory faults.
 - GitHub Actions that run native tests before building and uploading an arm64-v8a debug APK.
 
 ## Important limitations
 
-**AstraNS cannot launch Nintendo Switch games yet.** The library can import and catalogue user-selected files, but the title loader, Horizon services, complete CPU support and graphics rendering are not implemented. The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
+**AstraNS cannot launch Nintendo Switch games yet.** The NRO loader currently maps uncompressed homebrew binaries only; it does not implement MOD0 relocations/import resolution, the Switch runtime, Horizon services, commercial package handling, or GPU rendering. The library can import and catalogue user-selected files, but the title loader, Horizon services, complete CPU support and graphics rendering are not implemented. The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
 
 Not implemented:
 - Full ARMv8-A coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, hardware-format ARM translation tables/TLB and JIT. The current software page map is not an ARM hardware MMU.
