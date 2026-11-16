@@ -2,14 +2,33 @@ name: Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  native-tests:
+    name: Native AArch64 tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile and run native tests
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
+            app/src/main/cpp/arm64_interpreter.cpp \
+            app/src/test/cpp/arm64_interpreter_test.cpp \
+            -o "$RUNNER_TEMP/astrans-native-tests"
+          "$RUNNER_TEMP/astrans-native-tests"
+
   build:
+    name: Build Android APK
+    needs: native-tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,9 +42,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
 
       - name: Install Android NDK and CMake
-        run: sdkmanager "ndk;27.0.12077973" "cmake;3.22.1"
+        run: sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -33,7 +55,7 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build debug APK
-        run: gradle assembleDebug
+        run: gradle --no-daemon clean assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -41,3 +63,4 @@ jobs:
           name: AstraNS-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 7
