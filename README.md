@@ -2,10 +2,13 @@
 
 AstraNS is an original Android-first emulator research project. The Android shell is Kotlin; the experimental guest CPU, memory and diagnostic code is C++20.
 
-## Current status: 0.6.0 — virtual memory translation and Vulkan capability probe
+## Current status: 0.6.0 — emulator library UI and virtual memory translation
 
 Implemented:
-- Android application shell and JNI bridge.
+- Emulator-style Android UI with Library and Settings tabs.
+- Android document-picker import with persistent game-library entries, file metadata and remove-from-library action.
+- Saved graphics-profile, VSync, FPS-counter and audio preferences; these preferences are not yet wired to a functioning game renderer/audio backend.
+- JNI bridge and Vulkan/CPU diagnostics available inside Settings.
 - Page-aligned guest physical-memory regions with overlap checks and independent Read, Write and Execute permissions.
 - Software guest virtual-address space with 4 KB page mappings, virtual-to-physical translation, read/write/execute permissions, map/unmap/protect operations and multi-page access checks.
 - AArch64 instruction fetch, loads/stores and the CPU run loop can execute through translated virtual addresses.
@@ -18,7 +21,7 @@ Implemented:
 
 ## Important limitations
 
-**AstraNS is not yet a Nintendo Switch emulator and cannot run Hollow Knight or other Switch games.** The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
+**AstraNS cannot launch Nintendo Switch games yet.** The library can import and catalogue user-selected files, but the title loader, Horizon services, complete CPU support and graphics rendering are not implemented. The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
 
 Not implemented:
 - Full ARMv8-A coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, hardware-format ARM translation tables/TLB and JIT. The current software page map is not an ARM hardware MMU.
