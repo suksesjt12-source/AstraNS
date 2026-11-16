@@ -34,7 +34,8 @@ bool align_up_page(uint64_t value, uint64_t& aligned) noexcept {
 
 struct Segment {
     uint32_t offset;
-    uint32_t size;
+    uint32_t file_size;
+    uint32_t memory_size;
     uint64_t mapped_size;
     MemoryPermission final_permissions;
 };
@@ -108,23 +109,31 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
         return false;
     }
 
-    std::array<Segment, 3> segments{{
-        {text_offset, text_size, 0U, MemoryPermission::Read | MemoryPermission::Execute},
-        {ro_offset, ro_size, 0U, MemoryPermission::Read},
-        {data_offset, static_cast<uint32_t>(data_and_bss_size), 0U,
-         MemoryPermission::Read | MemoryPermission::Write}
-    }};
     if (data_and_bss_size > UINT32_MAX) {
         error = NroLoadError::InvalidSegment;
         return false;
     }
-    if (segments[2].size == 0U) segments[2].offset = 0U;
+    std::array<Segment, 3> segments{{
+        {text_offset, text_size, text_size, 0U,
+         MemoryPermission::Read | MemoryPermission::Execute},
+        {ro_offset, ro_size, ro_size, 0U, MemoryPermission::Read},
+        {data_offset, data_size, static_cast<uint32_t>(data_and_bss_size), 0U,
+         MemoryPermission::Read | MemoryPermission::Write}
+    }};
+    if (segments[2].memory_size == 0U) segments[2].offset = 0U;
 
     uint64_t image_end = 0U;
     for (Segment& segment : segments) {
-        if (segment.size == 0U) continue;
-        if (!align_up_page(segment.size, segment.mapped_size)) {
-            error = NroLoadError::AddressOverflow;
+        if (segment.memory_size == 0U) {
+            if (segment.file_size != 0U) {
+                error = NroLoadError::InvalidSegment;
+                return false;
+            }
+            continue;
+        }
+        if (!file_range_valid(segment.offset, segment.file_size) ||
+            !align_up_page(segment.memory_size, segment.mapped_size)) {
+            error = NroLoadError::InvalidSegment;
             return false;
         }
         uint64_t end = 0U;
@@ -135,16 +144,17 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
             error = NroLoadError::AddressOverflow;
             return false;
         }
-        image_end = std::max(image_end, static_cast<uint64_t>(segment.offset) + segment.size);
+        image_end = std::max(image_end,
+            static_cast<uint64_t>(segment.offset) + segment.memory_size);
     }
 
     // Validate page-rounded memory ranges before creating any mapping.
     for (std::size_t i = 0; i < segments.size(); ++i) {
-        if (segments[i].size == 0U) continue;
+        if (segments[i].memory_size == 0U) continue;
         const uint64_t begin_i = segments[i].offset;
         const uint64_t end_i = begin_i + segments[i].mapped_size;
         for (std::size_t j = i + 1U; j < segments.size(); ++j) {
-            if (segments[j].size == 0U) continue;
+            if (segments[j].memory_size == 0U) continue;
             const uint64_t begin_j = segments[j].offset;
             const uint64_t end_j = begin_j + segments[j].mapped_size;
             if (begin_i < end_j && begin_j < end_i) {
@@ -166,7 +176,7 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
     };
 
     for (const Segment& segment : segments) {
-        if (segment.size == 0U) continue;
+        if (segment.memory_size == 0U) continue;
         const uint64_t address = guest_base + segment.offset;
         if (!memory.map(address, static_cast<std::size_t>(segment.mapped_size),
                         temporary_permissions)) {
@@ -178,9 +188,9 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
     }
 
     for (const Segment& segment : segments) {
-        if (segment.size == 0U) continue;
+        if (segment.file_size == 0U) continue;
         if (!memory.write(guest_base + segment.offset,
-                          file_data + segment.offset, segment.size)) {
+                          file_data + segment.offset, segment.file_size)) {
             rollback();
             error = NroLoadError::CopyFailed;
             return false;
@@ -188,7 +198,7 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
     }
 
     for (const Segment& segment : segments) {
-        if (segment.size == 0U) continue;
+        if (segment.memory_size == 0U) continue;
         const uint64_t address = guest_base + segment.offset;
         if (!memory.protect(address, static_cast<std::size_t>(segment.mapped_size),
                             segment.final_permissions)) {

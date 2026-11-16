@@ -288,6 +288,8 @@ int main() {
     check(nro_error == astrans::NroLoadError::None, "NRO load error state is clear");
     check(loaded_nro.entry_point == 0x100000U && loaded_nro.bss_start == 0x103000U &&
           loaded_nro.bss_size == 0x80U, "NRO entry point and BSS boundaries");
+    check(loaded_nro.image_size == 0x3080U,
+          "NRO image span includes BSS allocated beyond the file data");
     check(nro_memory.fetch32(0x100000U, fetched) && fetched == 0x14000020U,
           "NRO text segment is executable");
     check(nro_memory.read(0x101000U, &fetched, 1U) && (fetched & 0xFFU) == 0xA5U,
