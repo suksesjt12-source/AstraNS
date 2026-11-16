@@ -186,7 +186,6 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
         }
     }
 
-    mapped_count = 0U;
     for (const Segment& segment : segments) {
         if (segment.size == 0U) continue;
         const uint64_t address = guest_base + segment.offset;

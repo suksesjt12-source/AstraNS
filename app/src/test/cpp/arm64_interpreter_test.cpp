@@ -280,6 +280,18 @@ int main() {
           "NRO BSS is zero-initialized");
     check(!nro_memory.write32(0x100000U, 0U), "NRO text is read-execute after load");
 
+    GuestMemory rollback_memory;
+    check(rollback_memory.map(0x201000U, GuestMemory::kPageSize,
+                              MemoryPermission::Read | MemoryPermission::Write),
+          "reserve second NRO segment to force mapping collision");
+    check(!astrans::load_nro(rollback_memory, nro_file.data(), nro_file.size(),
+                             0x200000U, loaded_nro, nro_error) &&
+          nro_error == astrans::NroLoadError::MappingFailed,
+          "NRO loader reports segment mapping collision");
+    check(!rollback_memory.contains(0x200000U, 4U) &&
+          rollback_memory.contains(0x201000U, 4U),
+          "NRO loader rolls back earlier segments without disturbing existing mapping");
+
     std::vector<uint8_t> invalid_nro = nro_file;
     invalid_nro[0x10U] = 'X';
     GuestMemory invalid_memory;
