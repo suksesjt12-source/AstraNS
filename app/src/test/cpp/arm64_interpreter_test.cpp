@@ -70,6 +70,12 @@ uint8_t hex_byte(char a, char b) {
     };
     return static_cast<uint8_t>((digit(a)<<4U)|digit(b));
 }
+uint32_t read_u32_le(const uint8_t* data) {
+    return static_cast<uint32_t>(data[0]) |
+           (static_cast<uint32_t>(data[1]) << 8U) |
+           (static_cast<uint32_t>(data[2]) << 16U) |
+           (static_cast<uint32_t>(data[3]) << 24U);
+}
 void write_u32_le(std::vector<uint8_t>& data, std::size_t offset, uint32_t value) {
     data[offset] = static_cast<uint8_t>(value);
     data[offset + 1U] = static_cast<uint8_t>(value >> 8U);
