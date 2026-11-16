@@ -313,8 +313,8 @@ int main() {
     check(extended_alu.x[5] == 265U, "UXTB zero extends a byte");
     extended_alu.x[2] = 0xFFFFFFFFU;
     check(execute_one(extended_alu, memory,
-          encode_add_sub_extended(true, true, true, 2U, 2U, 0U, 1U, 6U)) == StepResult::Executed,
-          "SUBS X6, X1, W2, UXTW");
+          encode_add_sub_extended(true, true, true, 2U, 6U, 0U, 1U, 6U)) == StepResult::Executed,
+          "SUBS X6, X1, W2, SXTW");
     check(extended_alu.x[6] == 11U && !extended_alu.c && !extended_alu.z,
           "extended SUBS updates arithmetic flags including unsigned borrow");
 
