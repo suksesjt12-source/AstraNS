@@ -416,7 +416,7 @@ int main() {
     std::vector<uint8_t> domain_hipc(80U, 0U);
     write_u32_le(domain_hipc, 0U, 6U);
     write_u32_le(domain_hipc, 4U, 12U); // 48 bytes of raw domain data.
-    write_u32_le(domain_hipc, 16U, 1U | (1U << 8U) | (1U << 16U)); // Invoke, one object, CMIF size=16.
+    write_u32_le(domain_hipc, 16U, 1U | (1U << 8U) | (16U << 16U)); // Invoke, one object, CMIF size=16.
     write_u32_le(domain_hipc, 20U, 0x22U); // Target object id.
     write_u32_le(domain_hipc, 28U, 0xABCDU); // Domain token.
     write_u32_le(domain_hipc, 32U, 0x49434653U); // SFCI
