@@ -44,12 +44,12 @@ class MainActivity : Activity() {
         )
         root.addView(label(testText, 16f, if (result.getOrNull() == 12) Color.GREEN else Color.YELLOW, true))
         root.addView(label(
-            "Milestone 0.3: guest memory + bounded AArch64 execution. " +
+            "Milestone 0.4: mapped guest memory + bounded AArch64 execution. " +
                 "This is not yet a Nintendo Switch emulator and cannot run commercial games.",
             14f, Color.LTGRAY
         ))
         root.addView(label(
-            "Next: virtual memory, privileged CPU state, SIMD/NEON, system services and GPU translation.",
+            "Next: MMU/page tables, privileged CPU state, SIMD/NEON, system services and GPU translation.",
             13f, Color.rgb(160, 180, 210)
         ))
         setContentView(root)
