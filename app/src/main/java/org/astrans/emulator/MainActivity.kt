@@ -37,19 +37,19 @@ class MainActivity : Activity() {
         val result = runCatching { nativeRunSelfTest() }
         val testText = result.fold(
             onSuccess = { value ->
-                if (value == 12) "ARM64 subset test: PASS (result = $value)"
-                else "ARM64 subset test: FAIL (result = $value)"
+                if (value == 12) "Guest memory + AArch64 execution: PASS (program returned $value)"
+                else "Guest execution test: FAIL (result = $value)"
             },
             onFailure = { "Native core error: ${it.message}" }
         )
         root.addView(label(testText, 16f, if (result.getOrNull() == 12) Color.GREEN else Color.YELLOW, true))
         root.addView(label(
-            "Milestone 0.1: Android shell + tiny AArch64 instruction interpreter. " +
+            "Milestone 0.3: guest memory + bounded AArch64 execution. " +
                 "This is not yet a Nintendo Switch emulator and cannot run commercial games.",
             14f, Color.LTGRAY
         ))
         root.addView(label(
-            "Next: memory model, instruction coverage, GPU command translation, audio and system services.",
+            "Next: virtual memory, privileged CPU state, SIMD/NEON, system services and GPU translation.",
             13f, Color.rgb(160, 180, 210)
         ))
         setContentView(root)
