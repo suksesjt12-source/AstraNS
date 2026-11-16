@@ -226,6 +226,45 @@ uint64_t shift_operand(uint64_t value, unsigned shift_type,
     }
 }
 
+
+bool decode_logical_immediate(bool is_64_bit, uint32_t instruction,
+                              uint64_t& result_mask) {
+    const unsigned n = (instruction >> 22U) & 1U;
+    const unsigned immr = (instruction >> 16U) & 0x3FU;
+    const unsigned imms = (instruction >> 10U) & 0x3FU;
+    if (!is_64_bit && n != 0U) return false;
+
+    const unsigned selector = (n << 6U) | ((~imms) & 0x3FU);
+    if (selector == 0U) return false;
+    unsigned length = 0U;
+    for (unsigned value = selector; value > 1U; value >>= 1U) ++length;
+    if (length < 1U || length > 6U) return false;
+
+    const unsigned element_size = 1U << length;
+    const unsigned register_width = is_64_bit ? 64U : 32U;
+    if (element_size > register_width) return false;
+    const unsigned levels = element_size - 1U;
+    const unsigned s = imms & levels;
+    const unsigned r = immr & levels;
+    if (s == levels) return false;
+
+    uint64_t element = s == 63U ? UINT64_MAX : ((uint64_t{1} << (s + 1U)) - 1U);
+    if (r != 0U) {
+        if (element_size == 64U) {
+            element = (element >> r) | (element << (64U - r));
+        } else {
+            const uint64_t element_mask = (uint64_t{1} << element_size) - 1U;
+            element = ((element >> r) | (element << (element_size - r))) & element_mask;
+        }
+    }
+
+    result_mask = 0U;
+    for (unsigned position = 0U; position < register_width; position += element_size)
+        result_mask |= element << position;
+    if (!is_64_bit) result_mask &= 0xFFFFFFFFULL;
+    return true;
+}
+
 void set_add_sub_flags(CpuState& cpu, uint64_t lhs, uint64_t rhs,
                        uint64_t result, bool is_64_bit, bool subtract) {
     const uint64_t sign = is_64_bit ? (uint64_t{1} << 63U) : (uint64_t{1} << 31U);
@@ -319,6 +358,36 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         const uint64_t result = (subtract ? lhs - operand : lhs + operand) & width_mask;
         write_reg(cpu, rd, result, is_64_bit, !set_flags);
         if (set_flags) set_add_sub_flags(cpu, lhs, operand, result, is_64_bit, subtract);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
+    // Logical immediate: AND, ORR, EOR and ANDS bitmask immediates.
+    if ((instruction & 0x1F800000U) == 0x12000000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const unsigned opc = (instruction >> 29U) & 0x3U;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rd = instruction & 0x1FU;
+        uint64_t immediate_mask = 0U;
+        if (!decode_logical_immediate(is_64_bit, instruction, immediate_mask))
+            return StepResult::InvalidEncoding;
+        const uint64_t width_mask = is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL;
+        const uint64_t lhs = read_reg(cpu, rn, false) & width_mask;
+        uint64_t result = 0U;
+        switch (opc) {
+            case 0U: result = lhs & immediate_mask; break;
+            case 1U: result = lhs | immediate_mask; break;
+            case 2U: result = lhs ^ immediate_mask; break;
+            case 3U: result = lhs & immediate_mask; break;
+            default: return StepResult::InvalidEncoding;
+        }
+        result &= width_mask;
+        write_reg(cpu, rd, result, is_64_bit, false);
+        if (opc == 3U) {
+            set_nz(cpu, result, is_64_bit);
+            cpu.c = false;
+            cpu.v = false;
+        }
         cpu.pc += 4U;
         return StepResult::Executed;
     }
@@ -509,12 +578,55 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
+    // Compare-and-branch immediate (CBZ/CBNZ).
+    if ((instruction & 0x7E000000U) == 0x34000000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const bool branch_if_nonzero = (instruction & 0x01000000U) != 0U;
+        const unsigned rt = instruction & 0x1FU;
+        const int64_t offset = sign_extend((instruction >> 5U) & 0x7FFFFU, 19U) * 4;
+        const uint64_t value = read_reg(cpu, rt, false) &
+                               (is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL);
+        const bool is_zero = value == 0U;
+        const bool take_branch = branch_if_nonzero ? !is_zero : is_zero;
+        cpu.pc = take_branch
+            ? static_cast<uint64_t>(static_cast<int64_t>(old_pc) + offset)
+            : old_pc + 4U;
+        return StepResult::Executed;
+    }
+
+    // Test-bit-and-branch immediate (TBZ/TBNZ).
+    if ((instruction & 0x7E000000U) == 0x36000000U) {
+        const bool high_bit = (instruction & 0x80000000U) != 0U;
+        const bool branch_if_nonzero = (instruction & 0x01000000U) != 0U;
+        const unsigned bit_number = (static_cast<unsigned>(high_bit) << 5U) |
+                                    ((instruction >> 19U) & 0x1FU);
+        const unsigned rt = instruction & 0x1FU;
+        const uint64_t value = read_reg(cpu, rt, false);
+        const bool bit_is_set = ((value >> bit_number) & 1U) != 0U;
+        const bool take_branch = branch_if_nonzero ? bit_is_set : !bit_is_set;
+        const int64_t offset = sign_extend((instruction >> 5U) & 0x3FFFU, 14U) * 4;
+        cpu.pc = take_branch
+            ? static_cast<uint64_t>(static_cast<int64_t>(old_pc) + offset)
+            : old_pc + 4U;
+        return StepResult::Executed;
+    }
+
     if ((instruction & 0xFF000010U) == 0x54000000U) {
         const unsigned condition = instruction & 0xFU;
         const int64_t offset = sign_extend((instruction >> 5U) & 0x7FFFFU, 19U) * 4;
         cpu.pc = condition_holds(cpu, condition)
             ? static_cast<uint64_t>(static_cast<int64_t>(old_pc) + offset)
             : old_pc + 4U;
+        return StepResult::Executed;
+    }
+
+    if ((instruction & 0xFFFFFC1FU) == 0xD61F0000U ||
+        (instruction & 0xFFFFFC1FU) == 0xD63F0000U) {
+        const bool link = (instruction & 0x00200000U) != 0U;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const uint64_t target = read_reg(cpu, rn, false);
+        if (link) cpu.x[30] = old_pc + 4U;
+        cpu.pc = target;
         return StepResult::Executed;
     }
 

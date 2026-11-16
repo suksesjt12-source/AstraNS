@@ -23,6 +23,27 @@ uint32_t encode_logical_shifted(bool sf, unsigned opc, bool invert,
            (shift << 22U) | (rm << 16U) | (amount << 10U) |
            (rn << 5U) | rd;
 }
+
+uint32_t encode_logical_immediate(bool sf, unsigned opc, unsigned n,
+                                  unsigned immr, unsigned imms,
+                                  unsigned rn, unsigned rd) {
+    return (static_cast<uint32_t>(sf) << 31U) | (opc << 29U) |
+           0x12000000U | (n << 22U) | (immr << 16U) |
+           (imms << 10U) | (rn << 5U) | rd;
+}
+uint32_t encode_compare_branch(bool sf, bool nonzero, unsigned immediate,
+                               unsigned rt) {
+    return (static_cast<uint32_t>(sf) << 31U) |
+           (static_cast<uint32_t>(nonzero) << 24U) | 0x34000000U |
+           ((immediate & 0x7FFFFU) << 5U) | rt;
+}
+uint32_t encode_test_branch(unsigned bit_number, bool nonzero,
+                            unsigned immediate, unsigned rt) {
+    return ((bit_number >> 5U) << 31U) |
+           (static_cast<uint32_t>(nonzero) << 24U) | 0x36000000U |
+           ((bit_number & 0x1FU) << 19U) |
+           ((immediate & 0x3FFFU) << 5U) | rt;
+}
 uint32_t encode_add_sub_extended(bool sf, bool subtract, bool set_flags,
                                    unsigned rm, unsigned option, unsigned amount,
                                    unsigned rn, unsigned rd) {
@@ -203,6 +224,64 @@ int main() {
     check(execute_one(shifts, memory,
           encode_add_sub_shifted(false, false, false, 0U, 1U, 32U, 1U, 0U)) ==
           StepResult::InvalidEncoding, "32-bit shifted ADD rejects shift amounts >= 32");
+
+    CpuState logical_immediate_cpu{};
+    logical_immediate_cpu.pc = 0x1800U;
+    logical_immediate_cpu.x[1] = 0x123456789ABCDEF0ULL;
+    check(execute_one(logical_immediate_cpu, memory,
+          encode_logical_immediate(true, 0U, 1U, 0U, 7U, 1U, 2U)) == StepResult::Executed,
+          "AND X2, X1, #0xFF");
+    check(logical_immediate_cpu.x[2] == 0xF0U, "logical immediate AND mask");
+    check(execute_one(logical_immediate_cpu, memory,
+          encode_logical_immediate(true, 1U, 1U, 0U, 7U, 1U, 3U)) == StepResult::Executed,
+          "ORR X3, X1, #0xFF");
+    check(logical_immediate_cpu.x[3] == 0x123456789ABCDEFFULL, "logical immediate ORR");
+    check(execute_one(logical_immediate_cpu, memory,
+          encode_logical_immediate(true, 2U, 1U, 0U, 7U, 1U, 4U)) == StepResult::Executed,
+          "EOR X4, X1, #0xFF");
+    check(logical_immediate_cpu.x[4] == 0x123456789ABCDE0FULL, "logical immediate EOR");
+    check(execute_one(logical_immediate_cpu, memory,
+          encode_logical_immediate(true, 3U, 1U, 0U, 7U, 1U, 5U)) == StepResult::Executed,
+          "ANDS X5, X1, #0xFF");
+    check(logical_immediate_cpu.x[5] == 0xF0U && !logical_immediate_cpu.z &&
+          !logical_immediate_cpu.c && !logical_immediate_cpu.v,
+          "logical immediate ANDS flags");
+    check(execute_one(logical_immediate_cpu, memory,
+          encode_logical_immediate(false, 0U, 1U, 0U, 7U, 1U, 2U)) ==
+          StepResult::InvalidEncoding, "32-bit logical immediate rejects N=1");
+
+    CpuState flow_cpu{};
+    flow_cpu.pc = 0x1900U;
+    flow_cpu.x[1] = 0U;
+    check(execute_one(flow_cpu, memory, encode_compare_branch(false, false, 2U, 1U)) ==
+          StepResult::Executed, "CBZ W1, +8");
+    check(flow_cpu.pc == 0x1908U, "CBZ takes branch for zero");
+    flow_cpu.pc = 0x1900U;
+    flow_cpu.x[1] = 1U;
+    check(execute_one(flow_cpu, memory, encode_compare_branch(true, true, 2U, 1U)) ==
+          StepResult::Executed, "CBNZ X1, +8");
+    check(flow_cpu.pc == 0x1908U, "CBNZ takes branch for nonzero");
+    flow_cpu.pc = 0x1A00U;
+    flow_cpu.x[2] = 0U;
+    check(execute_one(flow_cpu, memory, encode_test_branch(5U, false, 2U, 2U)) ==
+          StepResult::Executed, "TBZ X2, #5, +8");
+    check(flow_cpu.pc == 0x1A08U, "TBZ branches when tested bit is clear");
+    flow_cpu.pc = 0x1A00U;
+    flow_cpu.x[2] = 1ULL << 40U;
+    check(execute_one(flow_cpu, memory, encode_test_branch(40U, true, 2U, 2U)) ==
+          StepResult::Executed, "TBNZ X2, #40, +8");
+    check(flow_cpu.pc == 0x1A08U, "TBNZ branches when high bit is set");
+    flow_cpu.pc = 0x1B00U;
+    flow_cpu.x[3] = 0x1C00U;
+    check(execute_one(flow_cpu, memory, 0xD63F0000U | (3U << 5U)) == StepResult::Executed,
+          "BLR X3");
+    check(flow_cpu.pc == 0x1C00U && flow_cpu.x[30] == 0x1B04U,
+          "BLR sets return address and branches");
+    flow_cpu.x[3] = 0x1D00U;
+    check(execute_one(flow_cpu, memory, 0xD61F0000U | (3U << 5U)) == StepResult::Executed,
+          "BR X3");
+    check(flow_cpu.pc == 0x1D00U && flow_cpu.x[30] == 0x1B04U,
+          "BR branches without changing link register");
 
     CpuState address_cpu{};
     address_cpu.pc = 0x1600U;
