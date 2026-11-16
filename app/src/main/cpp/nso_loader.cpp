@@ -1,4 +1,5 @@
 #include "nso_loader.h"
+#include "mod0_relocator.h"
 
 #include <algorithm>
 #include <array>
@@ -299,6 +300,14 @@ bool load_nso(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
                             static_cast<std::size_t>(map_sizes[i]),segs[i].final_permissions)) {
             rollback(); error=NsoLoadError::MappingFailed; return false;
         }
+    }
+
+    Mod0Error mod0_error=Mod0Error::None;
+    if (!apply_mod0_relative_relocations(memory,guest_base,image_end,text_size,mod0_error) ||
+        (mod0_error!=Mod0Error::None && mod0_error!=Mod0Error::NoModuleHeader)) {
+        rollback();
+        error=NsoLoadError::RelocationFailed;
+        return false;
     }
 
     loaded.base_address=guest_base;

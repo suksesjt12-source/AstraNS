@@ -6,7 +6,7 @@
 namespace astrans {
 enum class NsoLoadError : uint8_t {
     None, NullInput, TooSmall, BadMagic, InvalidFlags, InvalidSegment,
-    UnsupportedCompression, DecompressionFailed, HashMismatch,
+    UnsupportedCompression, DecompressionFailed, HashMismatch, RelocationFailed,
     AddressOverflow, MappingFailed, CopyFailed
 };
 struct LoadedNso {

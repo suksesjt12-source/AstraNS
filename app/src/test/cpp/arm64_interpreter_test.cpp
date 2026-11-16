@@ -369,29 +369,32 @@ int main() {
           mod0_error==astrans::Mod0Error::NoModuleHeader,
           "image without MOD0 is reported separately");
 
-    std::vector<uint8_t> nso_file(0x2114U,0U);
+    std::vector<uint8_t> nso_file(0x2120U,0U);
     nso_file[0]='N'; nso_file[1]='S'; nso_file[2]='O'; nso_file[3]='0';
     write_u32_le(nso_file,0x0CU,0x09U);
     write_u32_le(nso_file,0x10U,0x100U);
     write_u32_le(nso_file,0x14U,0x0000U);
     write_u32_le(nso_file,0x18U,0x1000U);
-    write_u32_le(nso_file,0x20U,0x114U);
+    write_u32_le(nso_file,0x20U,0x120U);
     write_u32_le(nso_file,0x24U,0x1000U);
     write_u32_le(nso_file,0x28U,0x1000U);
-    write_u32_le(nso_file,0x30U,0x1114U);
+    write_u32_le(nso_file,0x30U,0x1120U);
     write_u32_le(nso_file,0x34U,0x2000U);
     write_u32_le(nso_file,0x38U,0x1000U);
     write_u32_le(nso_file,0x3CU,0x80U);
-    write_u32_le(nso_file,0x60U,20U);
+    write_u32_le(nso_file,0x60U,27U);
     write_u32_le(nso_file,0x64U,0x1000U);
     write_u32_le(nso_file,0x68U,0x1000U);
     std::size_t lz=0x100U;
-    nso_file[lz++]=0x1FU; nso_file[lz++]='A'; nso_file[lz++]=1U; nso_file[lz++]=0U;
+    nso_file[lz++]=0x8FU;
+    const uint8_t text_prefix[8]={0x20U,0x00U,0x00U,0x14U,0x00U,0x00U,0x00U,0x41U};
+    for(uint8_t byte:text_prefix) nso_file[lz++]=byte;
+    nso_file[lz++]=1U; nso_file[lz++]=0U;
     for(unsigned i=0;i<15U;++i) nso_file[lz++]=0xFFU;
-    nso_file[lz++]=0xFBU;
-    std::fill(nso_file.begin()+0x114,nso_file.begin()+0x1114,0xA5U);
-    std::fill(nso_file.begin()+0x1114,nso_file.end(),0x5AU);
-    const char expected_text_hash[]="6896d9ea3f73a4434f5832bc65714e7d066f177373f36f34dc8a6f735daa41b1";
+    nso_file[lz++]=0xF4U;
+    std::fill(nso_file.begin()+0x120,nso_file.begin()+0x1120,0xA5U);
+    std::fill(nso_file.begin()+0x1120,nso_file.end(),0x5AU);
+    const char expected_text_hash[]="64a59bf9881dd66793e864ebe989d30db9e8d13562b2a70baf102ee19c3967c7";
     for(unsigned i=0;i<32U;++i)
         nso_file[0xA0U+i]=hex_byte(expected_text_hash[i*2U],expected_text_hash[i*2U+1U]);
 
@@ -404,7 +407,7 @@ int main() {
     check(nso_error==astrans::NsoLoadError::None,"NSO loader success status");
     check(loaded_nso.entry_point==0x400000U&&loaded_nso.bss_start==0x403000U,
           "NSO entry point and BSS boundaries");
-    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x41414141U,
+    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x14000020U,
           "NSO LZ4 text is decompressed to executable guest memory");
     check(nso_memory.read(0x401000U,&fetched,1U)&&(fetched&0xFFU)==0xA5U,
           "NSO read-only data is copied");

@@ -1,4 +1,5 @@
 #include "nro_loader.h"
+#include "mod0_relocator.h"
 
 #include <algorithm>
 #include <array>
@@ -195,6 +196,14 @@ bool load_nro(GuestMemory& memory, const uint8_t* file_data, std::size_t file_si
             error = NroLoadError::MappingFailed;
             return false;
         }
+    }
+
+    Mod0Error mod0_error = Mod0Error::None;
+    if (!apply_mod0_relative_relocations(memory, guest_base, image_end, text_size, mod0_error) ||
+        (mod0_error != Mod0Error::None && mod0_error != Mod0Error::NoModuleHeader)) {
+        rollback();
+        error = NroLoadError::RelocationFailed;
+        return false;
     }
 
     loaded.base_address = guest_base;
