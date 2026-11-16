@@ -346,7 +346,7 @@ int main() {
     check(mod0_memory.write64(0x602008U,0x1000U),"initialize RELR target");
     std::array<uint8_t,0x100> bss_pattern{};
     bss_pattern.fill(0xABU);
-    check(mod0_memory.write(0x602F00U,bss_pattern.data(),bss_pattern.size()),
+    check(mod0_memory.write(0x603000U,bss_pattern.data(),bss_pattern.size()),
           "initialize BSS bytes before MOD0");
     astrans::Mod0Error mod0_error=astrans::Mod0Error::None;
     check(astrans::apply_mod0_relative_relocations(mod0_memory,0x600000U,
@@ -357,11 +357,11 @@ int main() {
           "RELA adds image base to signed addend");
     check(mod0_memory.read64(0x602008U,memory_value)&&memory_value==0x601000U,
           "RELR direct entry relocates target");
-    check(mod0_memory.read64(0x602F00U,memory_value)&&memory_value==0U,
+    check(mod0_memory.read64(0x603000U,memory_value)&&memory_value==0U,
           "MOD0 clears BSS");
     GuestMemory no_mod0_memory;
     check(no_mod0_memory.map(0x700000U,GuestMemory::kPageSize,
-                             MemoryPermission::Read|MemoryPermission::Execute),
+                             MemoryPermission::Read|MemoryPermission::Write|MemoryPermission::Execute),
           "map image without MOD0");
     check(no_mod0_memory.write32(0x700004U,0U),"write no-MOD0 pointer");
     check(astrans::apply_mod0_relative_relocations(no_mod0_memory,0x700000U,

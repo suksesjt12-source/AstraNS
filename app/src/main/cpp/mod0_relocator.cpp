@@ -186,7 +186,7 @@ bool apply_mod0_relative_relocations(GuestMemory& memory,uint64_t image_base,
                 error=Mod0Error::UnsupportedRelocation;
                 return false;
             }
-            uint64_t target=0U,value=0U,relocated=0U;
+            uint64_t target=0U,relocated=0U;
             if(!add_unsigned(image_base,target_offset,target)||
                !image_range(image_base,image_size,target,8U)) {
                 error=Mod0Error::InvalidRelocationTable; return false;
