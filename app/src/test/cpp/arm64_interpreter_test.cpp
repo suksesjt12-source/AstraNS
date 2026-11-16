@@ -58,6 +58,18 @@ uint32_t encode_adr(bool page_relative, int64_t immediate, unsigned rd) {
            (static_cast<uint32_t>((imm & 0x3U) << 29U)) |
            (static_cast<uint32_t>(((imm >> 2U) & 0x7FFFFU) << 5U)) | rd;
 }
+uint32_t encode_madd(bool sf, bool subtract, unsigned rm, unsigned ra,
+                     unsigned rn, unsigned rd) {
+    return (static_cast<uint32_t>(sf) << 31U) |
+           (static_cast<uint32_t>(subtract) << 15U) | 0x1B000000U |
+           (rm << 16U) | (ra << 10U) | (rn << 5U) | rd;
+}
+uint32_t encode_unsigned_memory(unsigned size, unsigned opc, unsigned byte_offset,
+                                unsigned rn, unsigned rt) {
+    const unsigned scaled_offset = byte_offset >> size;
+    return (size << 30U) | 0x39000000U | (opc << 22U) |
+           ((scaled_offset & 0xFFFU) << 10U) | (rn << 5U) | rt;
+}
 uint32_t encode_pair(bool is_64_bit, bool load, unsigned mode, int immediate,
                       unsigned rt2, unsigned rn, unsigned rt) {
     const unsigned size = is_64_bit ? 2U : 0U;
@@ -224,6 +236,54 @@ int main() {
     check(execute_one(shifts, memory,
           encode_add_sub_shifted(false, false, false, 0U, 1U, 32U, 1U, 0U)) ==
           StepResult::InvalidEncoding, "32-bit shifted ADD rejects shift amounts >= 32");
+
+    CpuState multiply_cpu{};
+    multiply_cpu.pc = 0x1780U;
+    multiply_cpu.x[1] = 7U;
+    multiply_cpu.x[2] = 3U;
+    multiply_cpu.x[3] = 2U;
+    check(execute_one(multiply_cpu, memory,
+          encode_madd(true, false, 2U, 3U, 1U, 4U)) == StepResult::Executed,
+          "MADD X4, X1, X2, X3");
+    check(multiply_cpu.x[4] == 23U, "MADD multiplies and accumulates");
+    check(execute_one(multiply_cpu, memory,
+          encode_madd(true, true, 2U, 3U, 1U, 5U)) == StepResult::Executed,
+          "MSUB X5, X1, X2, X3");
+    check(multiply_cpu.x[5] == UINT64_MAX - 18U, "MSUB subtracts product from accumulator");
+    check(execute_one(multiply_cpu, memory,
+          encode_madd(true, false, 2U, 31U, 1U, 6U)) == StepResult::Executed,
+          "MUL X6, X1, X2 alias");
+    check(multiply_cpu.x[6] == 21U, "MUL alias multiplies registers");
+
+    CpuState signed_loads{};
+    signed_loads.pc = 0x1790U;
+    signed_loads.x[1] = 0x2800U;
+    const uint8_t byte_value = 0x80U;
+    const uint8_t half_value[2] = {0x01U, 0x80U};
+    const uint8_t word_value[4] = {0x00U, 0x00U, 0x00U, 0x80U};
+    check(memory.write(0x2800U, &byte_value, 1U), "write signed byte test value");
+    check(memory.write(0x2802U, half_value, sizeof(half_value)), "write signed halfword test value");
+    check(memory.write(0x2804U, word_value, sizeof(word_value)), "write signed word test value");
+    check(execute_one(signed_loads, memory,
+          encode_unsigned_memory(0U, 2U, 0U, 1U, 2U)) == StepResult::Executed,
+          "LDRSB X2, [X1]");
+    check(signed_loads.x[2] == 0xFFFFFFFFFFFFFF80ULL, "LDRSB to X sign extends to 64 bits");
+    check(execute_one(signed_loads, memory,
+          encode_unsigned_memory(0U, 3U, 0U, 1U, 3U)) == StepResult::Executed,
+          "LDRSB W3, [X1]");
+    check(signed_loads.x[3] == 0xFFFFFF80ULL, "LDRSB to W sign extends to 32 bits");
+    check(execute_one(signed_loads, memory,
+          encode_unsigned_memory(1U, 2U, 2U, 1U, 4U)) == StepResult::Executed,
+          "LDRSH X4, [X1, #2]");
+    check(signed_loads.x[4] == 0xFFFFFFFFFFFF8001ULL, "LDRSH sign extends halfword");
+    check(execute_one(signed_loads, memory,
+          encode_unsigned_memory(2U, 2U, 4U, 1U, 5U)) == StepResult::Executed,
+          "LDRSW X5, [X1, #4]");
+    check(signed_loads.x[5] == 0xFFFFFFFF80000000ULL, "LDRSW sign extends word");
+    check(execute_one(signed_loads, memory,
+          encode_unsigned_memory(1U, 1U, 2U, 1U, 6U)) == StepResult::Executed,
+          "LDRH W6, [X1, #2]");
+    check(signed_loads.x[6] == 0x8001U, "unsigned LDRH zero extends halfword");
 
     CpuState logical_immediate_cpu{};
     logical_immediate_cpu.pc = 0x1800U;

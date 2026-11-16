@@ -362,6 +362,25 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
+    // Integer multiply-accumulate and multiply-subtract (MADD/MSUB).
+    if ((instruction & 0x1F000000U) == 0x1B000000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const bool subtract = (instruction & 0x00008000U) != 0U;
+        const unsigned rm = (instruction >> 16U) & 0x1FU;
+        const unsigned ra = (instruction >> 10U) & 0x1FU;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rd = instruction & 0x1FU;
+        const uint64_t mask = is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL;
+        const uint64_t multiplicand = read_reg(cpu, rn, false) & mask;
+        const uint64_t multiplier = read_reg(cpu, rm, false) & mask;
+        const uint64_t accumulator = read_reg(cpu, ra, false) & mask;
+        const uint64_t product = (multiplicand * multiplier) & mask;
+        const uint64_t result = (subtract ? accumulator - product : product + accumulator) & mask;
+        write_reg(cpu, rd, result, is_64_bit, false);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
     // Logical immediate: AND, ORR, EOR and ANDS bitmask immediates.
     if ((instruction & 0x1F800000U) == 0x12000000U) {
         const bool is_64_bit = (instruction & 0x80000000U) != 0U;
@@ -545,8 +564,9 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         const unsigned size_code = (instruction >> 30U) & 0x3U;
         const unsigned access_size = 1U << size_code;
         const unsigned opc = (instruction >> 22U) & 0x3U;
-        if (opc > 1U) return StepResult::Unsupported;
-        const bool load = opc == 1U;
+        const bool load = opc != 0U;
+        if (opc >= 2U && (access_size == 8U || (opc == 3U && access_size >= 4U)))
+            return StepResult::InvalidEncoding;
         const unsigned rt = instruction & 0x1FU;
         const unsigned rn = (instruction >> 5U) & 0x1FU;
         const uint64_t offset = ((instruction >> 10U) & 0xFFFU) << size_code;
@@ -559,7 +579,15 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
             if (!memory.read(address, raw, access_size)) return StepResult::MemoryFault;
             for (unsigned i = 0; i < access_size; ++i)
                 value |= static_cast<uint64_t>(raw[i]) << (i * 8U);
-            write_reg(cpu, rt, value, access_size == 8U, false);
+            if (opc == 2U) {
+                value = static_cast<uint64_t>(sign_extend(value, access_size * 8U));
+                write_reg(cpu, rt, value, true, false);
+            } else if (opc == 3U) {
+                value = static_cast<uint32_t>(sign_extend(value, access_size * 8U));
+                write_reg(cpu, rt, value, false, false);
+            } else {
+                write_reg(cpu, rt, value, access_size == 8U, false);
+            }
         } else {
             value = read_reg(cpu, rt, false);
             uint8_t raw[8]{};
