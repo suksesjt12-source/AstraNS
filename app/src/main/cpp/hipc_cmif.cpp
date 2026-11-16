@@ -213,6 +213,134 @@ bool build_cmif_response(uint16_t version, uint32_t result,
     return true;
 }
 
+
+bool parse_cmif_domain_request(const uint8_t* data, std::size_t size,
+                               const HipcMessage& message,
+                               CmifDomainRequest& request, HipcError& error) {
+    request = {};
+    error = HipcError::None;
+    if (data == nullptr) {
+        error = HipcError::NullInput;
+        return false;
+    }
+    if (message.raw_data_offset > size ||
+        message.raw_data_size > size - message.raw_data_offset ||
+        message.raw_data_size < 16U) {
+        error = HipcError::TruncatedRawData;
+        return false;
+    }
+
+    const uint8_t* raw = data + message.raw_data_offset;
+    const uint8_t request_kind = raw[0];
+    const uint8_t object_count = raw[1];
+    const uint16_t cmif_raw_size = static_cast<uint16_t>(raw[2]) |
+                                   static_cast<uint16_t>(raw[3] << 8U);
+    const uint32_t target_object_id = read_u32(raw + 4U);
+    const uint32_t token = read_u32(raw + 12U);
+    if (request_kind != 1U && request_kind != 2U) {
+        error = HipcError::InvalidCmifSignature;
+        return false;
+    }
+    if (cmif_raw_size < kCmifHeaderSize || cmif_raw_size > message.raw_data_size - 16U) {
+        error = HipcError::TruncatedRawData;
+        return false;
+    }
+
+    HipcMessage nested = message;
+    nested.raw_data_offset = message.raw_data_offset + 16U;
+    nested.raw_data_size = cmif_raw_size;
+    if (!parse_cmif_request(data, size, nested, request.command, error)) return false;
+
+    const std::size_t object_ids_offset = 16U + cmif_raw_size;
+    const std::size_t object_id_bytes = static_cast<std::size_t>(object_count) * 4U;
+    if (object_ids_offset > message.raw_data_size ||
+        object_id_bytes > message.raw_data_size - object_ids_offset) {
+        error = HipcError::TruncatedRawData;
+        return false;
+    }
+
+    request.request_kind = request_kind;
+    request.target_object_id = target_object_id;
+    request.token = token;
+    request.input_object_ids.reserve(object_count);
+    for (std::size_t i = 0; i < object_count; ++i)
+        request.input_object_ids.push_back(read_u32(raw + object_ids_offset + i * 4U));
+    return true;
+}
+
+bool build_cmif_domain_response(uint32_t output_object_count,
+                                const uint8_t* cmif_payload,
+                                std::size_t cmif_payload_size,
+                                std::vector<uint8_t>& output,
+                                HipcError& error) {
+    output.clear();
+    error = HipcError::None;
+    if (cmif_payload == nullptr && cmif_payload_size != 0U) {
+        error = HipcError::InvalidOutputBuffer;
+        return false;
+    }
+    if (cmif_payload_size > std::numeric_limits<std::size_t>::max() - 16U) {
+        error = HipcError::InvalidOutputBuffer;
+        return false;
+    }
+    output.resize(16U + cmif_payload_size, 0U);
+    write_u32(output.data(), output_object_count);
+    if (cmif_payload_size != 0U)
+        std::copy(cmif_payload, cmif_payload + cmif_payload_size, output.begin() + 16U);
+    return true;
+}
+
+uint32_t IpcHandleTable::insert(std::shared_ptr<IpcKernelObject> object) {
+    if (!object || next_handle_ == 0U) return 0U;
+    const uint32_t handle = next_handle_++;
+    handles_.emplace(handle, std::move(object));
+    return handle;
+}
+
+uint32_t IpcHandleTable::duplicate(uint32_t handle) {
+    const auto it = handles_.find(handle);
+    if (it == handles_.end()) return 0U;
+    return insert(it->second);
+}
+
+uint32_t IpcHandleTable::move(uint32_t handle) {
+    const auto it = handles_.find(handle);
+    if (it == handles_.end()) return 0U;
+    auto object = std::move(it->second);
+    handles_.erase(it);
+    const uint32_t new_handle = insert(std::move(object));
+    return new_handle;
+}
+
+bool IpcHandleTable::close(uint32_t handle) {
+    return handles_.erase(handle) == 1U;
+}
+
+std::shared_ptr<IpcKernelObject> IpcHandleTable::get(uint32_t handle) const {
+    const auto it = handles_.find(handle);
+    return it == handles_.end() ? nullptr : it->second;
+}
+
+std::size_t IpcHandleTable::size() const noexcept { return handles_.size(); }
+
+uint32_t CmifDomainTable::insert(CmifServiceHandler handler) {
+    if (!handler || next_object_id_ == 0U) return 0U;
+    const uint32_t object_id = next_object_id_++;
+    objects_.emplace(object_id, std::move(handler));
+    return object_id;
+}
+
+bool CmifDomainTable::remove(uint32_t object_id) {
+    return objects_.erase(object_id) == 1U;
+}
+
+const CmifServiceHandler* CmifDomainTable::get(uint32_t object_id) const noexcept {
+    const auto it = objects_.find(object_id);
+    return it == objects_.end() ? nullptr : &it->second;
+}
+
+std::size_t CmifDomainTable::size() const noexcept { return objects_.size(); }
+
 bool CmifServiceManager::register_service(const std::string& name,
                                            CmifServiceHandler handler) {
     if (name.empty() || !handler || services_.find(name) != services_.end()) return false;

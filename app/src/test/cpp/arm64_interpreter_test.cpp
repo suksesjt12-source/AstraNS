@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 
 namespace {
 
@@ -409,6 +410,69 @@ int main() {
     check(!service_manager.dispatch("missing",parsed_cmif,cmif_response,ipc_error) &&
           ipc_error==astrans::HipcError::ServiceNotFound,
           "CMIF dispatcher reports unregistered service");
+
+
+    // CMIF domain request carries a 16-byte domain header, nested CMIF, and object IDs.
+    std::vector<uint8_t> domain_hipc(80U, 0U);
+    write_u32_le(domain_hipc, 0U, 6U);
+    write_u32_le(domain_hipc, 4U, 12U); // 48 bytes of raw domain data.
+    write_u32_le(domain_hipc, 16U, 1U | (1U << 8U) | (1U << 16U)); // Invoke, one object, CMIF size=16.
+    write_u32_le(domain_hipc, 20U, 0x22U); // Target object id.
+    write_u32_le(domain_hipc, 28U, 0xABCDU); // Domain token.
+    write_u32_le(domain_hipc, 32U, 0x49434653U); // SFCI
+    write_u32_le(domain_hipc, 36U, 1U);
+    write_u32_le(domain_hipc, 40U, 7U);
+    write_u32_le(domain_hipc, 44U, 0x76543210U);
+    write_u32_le(domain_hipc, 48U, 0x66U); // Input domain object id.
+    astrans::HipcMessage domain_message{};
+    check(astrans::parse_hipc_message(domain_hipc.data(), domain_hipc.size(),
+                                      domain_message, ipc_error),
+          "parse HIPC envelope for domain message");
+    astrans::CmifDomainRequest domain_request{};
+    check(astrans::parse_cmif_domain_request(domain_hipc.data(), domain_hipc.size(),
+                                              domain_message, domain_request, ipc_error),
+          "parse CMIF domain request header and nested SFCI");
+    check(domain_request.request_kind == 1U && domain_request.target_object_id == 0x22U &&
+          domain_request.token == 0xABCDU && domain_request.command.method_id == 7U &&
+          domain_request.input_object_ids.size() == 1U &&
+          domain_request.input_object_ids[0] == 0x66U,
+          "CMIF domain request fields and object IDs");
+    std::vector<uint8_t> domain_response;
+    const uint8_t one_byte_payload = 0x7BU;
+    check(astrans::build_cmif_domain_response(2U, &one_byte_payload, 1U,
+                                               domain_response, ipc_error),
+          "build CMIF domain response");
+    check(domain_response.size() == 17U && read_u32_le(domain_response.data()) == 2U &&
+          domain_response[16U] == 0x7BU,
+          "CMIF domain response header and payload");
+
+    astrans::IpcHandleTable handle_table;
+    auto kernel_event = std::make_shared<astrans::IpcKernelObject>(
+        astrans::IpcObjectType::Event);
+    const uint32_t first_handle = handle_table.insert(kernel_event);
+    const uint32_t copied_handle = handle_table.duplicate(first_handle);
+    check(first_handle != 0U && copied_handle != 0U && copied_handle != first_handle &&
+          handle_table.size() == 2U && handle_table.get(first_handle) == handle_table.get(copied_handle),
+          "copy handle creates a second handle to the same kernel object");
+    const uint32_t moved_handle = handle_table.move(copied_handle);
+    check(moved_handle != 0U && moved_handle != copied_handle &&
+          !handle_table.get(copied_handle) && handle_table.get(moved_handle) == kernel_event,
+          "move handle transfers the table entry and invalidates the original");
+    check(handle_table.close(first_handle) && handle_table.close(moved_handle) &&
+          handle_table.size() == 0U && !handle_table.close(moved_handle),
+          "close handle releases valid entry exactly once");
+
+    astrans::CmifDomainTable domain_table;
+    const uint32_t object_a = domain_table.insert(
+        [](const astrans::CmifRequest&, std::vector<uint8_t>&) -> uint32_t { return 0U; });
+    const uint32_t object_b = domain_table.insert(
+        [](const astrans::CmifRequest&, std::vector<uint8_t>&) -> uint32_t { return 1U; });
+    check(object_a != 0U && object_b != object_a &&
+          domain_table.size() == 2U && domain_table.get(object_a) != nullptr,
+          "domain table registers independently addressable objects");
+    check(domain_table.remove(object_a) && domain_table.get(object_a) == nullptr &&
+          domain_table.size() == 1U,
+          "domain table removes and releases one domain object");
 
     GuestMemory mod0_memory;
     const auto mod0_rwx=MemoryPermission::Read|MemoryPermission::Write|MemoryPermission::Execute;
