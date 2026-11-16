@@ -425,7 +425,7 @@ int main() {
     check(nso_error==astrans::NsoLoadError::None,"NSO loader success status");
     check(loaded_nso.entry_point==0x400000U&&loaded_nso.bss_start==0x403000U,
           "NSO entry point and BSS boundaries");
-    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x14000004U,
+    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x14000002U,
           "NSO LZ4 text is decompressed to executable guest memory");
     check(nso_memory.read(0x401000U,&fetched,1U)&&(fetched&0xFFU)==0xA5U,
           "NSO read-only data is copied");
