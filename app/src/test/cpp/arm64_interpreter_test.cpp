@@ -401,9 +401,12 @@ int main() {
     GuestMemory nso_memory;
     astrans::LoadedNso loaded_nso{};
     astrans::NsoLoadError nso_error=astrans::NsoLoadError::None;
-    check(astrans::load_nso(nso_memory,nso_file.data(),nso_file.size(),0x400000U,
-                            loaded_nso,nso_error),
-          "load NSO with LZ4 text and requested SHA-256 validation");
+    const bool nso_loaded = astrans::load_nso(nso_memory,nso_file.data(),nso_file.size(),
+                                                 0x400000U,loaded_nso,nso_error);
+    if (!nso_loaded) {
+        std::cerr << "NSO load error code: " << static_cast<unsigned>(nso_error) << '\\n';
+    }
+    check(nso_loaded, "load NSO with LZ4 text and requested SHA-256 validation");
     check(nso_error==astrans::NsoLoadError::None,"NSO loader success status");
     check(loaded_nso.entry_point==0x400000U&&loaded_nso.bss_start==0x403000U,
           "NSO entry point and BSS boundaries");
