@@ -395,7 +395,7 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
             if (base < magnitude) return StepResult::MemoryFault;
             updated_base = base - magnitude;
         }
-        const uint64_t address = mode == 3U ? updated_base : base;
+        const uint64_t address = mode == 1U ? base : updated_base;
         uint8_t raw[16]{};
         if (load) {
             if (!memory.read(address, raw, element_size * 2U)) return StepResult::MemoryFault;
