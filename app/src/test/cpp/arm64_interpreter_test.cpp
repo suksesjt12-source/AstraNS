@@ -398,7 +398,7 @@ int main() {
     nso_file[lz++]=0xFFU;
     nso_file[lz++]=1U; // 16 literal bytes.
     const uint8_t text_prefix[16]={
-        0x04U,0x00U,0x00U,0x14U, // B +0x10
+        0x02U,0x00U,0x00U,0x14U, // B +0x10
         0x00U,0x00U,0x00U,0x00U, // MOD0 offset = 0 (no MOD0 header)
         0xE0U,0x00U,0x80U,0xD2U, // MOVZ X0, #7
         0xC0U,0x03U,0x5FU,0xD6U  // RET X30
@@ -409,7 +409,7 @@ int main() {
     nso_file[lz++]=0xECU;
     std::fill(nso_file.begin()+0x130,nso_file.begin()+0x1130,0xA5U);
     std::fill(nso_file.begin()+0x1130,nso_file.end(),0x5AU);
-    const char expected_text_hash[]="2070575c303797e5b88a0d54736811b45d3f9ffcdcdd10f6a92718c6282ec549";
+    const char expected_text_hash[]="3b34fa39c06746e1718e3add6633aeaf40a7f58df6cd668ad208cb6afb69f5f0";
     for(unsigned i=0;i<32U;++i)
         nso_file[0xA0U+i]=hex_byte(expected_text_hash[i*2U],expected_text_hash[i*2U+1U]);
 
