@@ -48,6 +48,21 @@ int main() {
     check(execute_one(cpu, memory, 0xF1000021U) == StepResult::Executed, "SUBS X1, X1, #0");
     check(cpu.c && !cpu.z, "SUBS updates carry and zero flags");
 
+    CpuState moves{};
+    moves.pc = 0x1000U;
+    check(execute_one(moves, memory, 0x92800020U) == StepResult::Executed, "MOVN X0, #1");
+    check(moves.x[0] == 0xFFFFFFFFFFFFFFFEULL, "MOVN inverts the immediate");
+    check(execute_one(moves, memory, 0xF2A24680U) == StepResult::Executed, "MOVK X0, #0x1234, LSL #16");
+    check(moves.x[0] == 0xFFFFFFFF1234FFFEULL, "MOVK replaces only the selected halfword");
+
+    CpuState conditional{};
+    conditional.pc = 0x1100U;
+    conditional.x[1] = 7U;
+    check(execute_one(conditional, memory, 0xF1001C21U) == StepResult::Executed, "SUBS X1, X1, #7");
+    check(conditional.z && conditional.c, "SUBS sets zero and carry flags");
+    check(execute_one(conditional, memory, 0x54000040U) == StepResult::Executed, "B.EQ +8");
+    check(conditional.pc == 0x110CU, "taken conditional branch updates PC");
+
     cpu.pc = 0x1200U;
     check(execute_one(cpu, memory, 0x94000002U) == StepResult::Executed, "BL +8");
     check(cpu.x[30] == 0x1204U && cpu.pc == 0x1208U, "BL stores return address");
@@ -59,6 +74,11 @@ int main() {
     check(memory.write32(0x1000U, 0x14000000U), "write B #0");
     check(run(loop, memory, 4U) == StepResult::StepLimitReached, "run loop enforces step limit");
     check(loop.instructions_executed == 4U && loop.pc == 0x1000U, "branch loop state");
+
+    CpuState fault{};
+    fault.pc = 0x3000U;
+    check(run(fault, memory, 2U) == StepResult::MemoryFault,
+          "fetch outside guest memory faults safely");
 
     CpuState bad{};
     bad.pc = 0x1000U;
