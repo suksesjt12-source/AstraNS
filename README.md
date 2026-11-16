@@ -1,80 +1,41 @@
 # AstraNS
 
-AstraNS is an original Android-first emulator research project. The Android shell is Kotlin; the experimental guest CPU, memory and diagnostic code is C++20.
+AstraNS is an original Android-first Nintendo Switch emulation research project. Its Android interface is Kotlin; its experimental CPU, memory, executable loaders and IPC foundations are C++20.
 
-## Current status: 0.6.0 — emulator library UI and virtual memory translation
+## Current status: 1.7.0 — homebrew image loading from Android
 
 Implemented:
-- Emulator-style Android UI with Library and Settings tabs.
-- Android document-picker import with persistent game-library entries, file metadata and remove-from-library action.
-- Saved graphics-profile, VSync, FPS-counter and audio preferences; these preferences are not yet wired to a functioning game renderer/audio backend.
-- JNI bridge and Vulkan/CPU diagnostics available inside Settings.
-- Page-aligned guest physical-memory regions with overlap checks and independent Read, Write and Execute permissions.
-- Software guest virtual-address space with 4 KB page mappings, virtual-to-physical translation, read/write/execute permissions, map/unmap/protect operations and multi-page access checks.
-- AArch64 instruction fetch, loads/stores and the CPU run loop can execute through translated virtual addresses.
-- Checked guest-memory access and little-endian 32/64-bit reads and writes.
-- A bounded fetch/decode/execute loop with instruction budget and deterministic stop-address support.
-- Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADR/ADRP; ADD/SUB immediate, shifted-register and extended-register forms with NZCV flags; AND/ORR/EOR/ANDS shifted-register and bitmask-immediate forms; CSEL; unsigned-immediate integer LDR/STR with signed/unsigned byte, halfword and word loads; MADD/MSUB/MUL; GPR LDP/STP/LDPSW pair operations with offset/pre/post addressing; B, BL, B.cond, CBZ/CBNZ, TBZ/TBNZ, BR, BLR and RET.
-- Native Vulkan probe that creates a Vulkan instance and reports physical GPU names, device type, API version, device-local heap size, queue capabilities and swapchain-extension availability.
-- Host tests for NRO validation/loading, segment permissions, BSS zero-fill, physical memory, virtual mappings and aliases, permission enforcement, cross-page access, failed boundary writes, translated instruction fetch, shifted and immediate logical operations, CSEL, MADD/MSUB/MUL, signed and unsigned loads, pair loads/stores and writeback, PC-relative address generation, extended operands, conditional/test-bit branches, indirect calls, flags, instruction budgets and memory faults.
-- GitHub Actions that run native tests before building and uploading an arm64-v8a debug APK.
+- Android Library and Settings interface with persistent document-picker entries.
+- Detail action sends selected NRO0/NSO0 image bytes through JNI into native guest memory.
+- Bounded input size (128 MiB) and BSS size (64 MiB) for the Android homebrew loading path.
+- NRO/NSO segment mapping, MOD0 relative relocation stage, final memory permissions and detailed load/error report.
+- 4 KiB guest physical pages and a software virtual-address map with read/write/execute checks.
+- Bounded ARM64 interpreter with a limited instruction subset: NOP, MOVZ/MOVN/MOVK, ADR/ADRP, selected ADD/SUB forms, logical forms, CSEL, MADD/MSUB/MUL, integer loads, LDP/STP and branches.
+- NRO0 and NSO0 segment validation; NSO LZ4 decompression and SHA-256 validation; BSS initialization.
+- Limited MOD0 R_AARCH64_RELATIVE RELA/RELR relocation handling.
+- HIPC/CMIF parsers for basic messages/domains, basic service dispatch and handle table.
+- TIPC request parser and a basic sm service registry with session limits.
+- Vulkan capability probe. GitHub Actions native tests and arm64-v8a APK build.
 
 ## Important limitations
 
-**AstraNS cannot launch Nintendo Switch games yet.** The NRO loader currently maps uncompressed homebrew binaries only; it does not implement MOD0 relocations/import resolution, the Switch runtime, Horizon services, commercial package handling, or GPU rendering. The library can import and catalogue user-selected files, but commercial package parsing, MOD0 relocation/import resolution, Horizon services, full CPU support and graphics rendering are not implemented. The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
+**AstraNS does not boot Nintendo Switch OS or launch Hollow Knight.** A successful NRO/NSO load means the executable image was mapped to guest memory; it does not mean the guest operating system or game has booted. There is no complete Horizon kernel/runtime, scheduler, SVC/syscall implementation, full CPU execution engine or Tegra X1 GPU renderer.
 
 Not implemented:
-- Full ARMv8-A coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, hardware-format ARM translation tables/TLB and JIT. The current software page map is not an ARM hardware MMU.
-- Switch boot process, kernel and system services, IPC, filesystem interfaces or required runtime libraries.
-- Tegra X1 GPU command processor, Maxwell features, shader translation or Vulkan renderer.
-- Audio, controller input, title loader, save data or commercial game compatibility.
+- Full ARMv8-A, SIMD/NEON, floating point, atomics, exceptions, sysregs, hardware ARM MMU translation tables/TLB, JIT or multicore scheduling.
+- Complete Switch boot chain, NPDM/NACP, full title/package handling, import resolution and the complete dynamic relocation set.
+- Full HIPC descriptor memory transfers, kernel object semantics, SVC handle lifecycle, the complete TIPC service manager and actual Horizon services.
+- Tegra X1 Maxwell GPU command processor, shader translation and Vulkan rendering.
+- Audio, controller input, filesystem save-data integration, timing and real-game compatibility testing.
 
-## Build APK
+Graphics/VSync/FPS/audio settings are preferences only until the corresponding runtime backends exist. The Vulkan module is a hardware probe, not a renderer. Commercial NSP/XCI packages are not supported by this homebrew loader.
 
-Every push to `main` triggers the Android APK workflow. Pull requests run native tests. You can also start the workflow manually from the repository's **Actions** tab.
+## Build and test
 
-After a successful run:
-1. Open **Actions**.
-2. Select the latest successful **Android APK** run.
-3. Open **Artifacts**.
-4. Download `AstraNS-debug-apk` and extract `app-debug.apk`.
+Every push to main triggers the Android APK workflow. The pipeline runs native C++ tests before building the arm64-v8a debug APK. Download the AstraNS-debug-apk artifact from the Artifacts section of the latest successful Actions run.
 
-The debug APK is for development/testing, not a Play Store release. It targets 64-bit ARM Android devices.
-
-## Local build requirements
-
-- JDK 17
-- Android SDK Platform 35
-- Android NDK 27.0.12077973
-- CMake 3.22.1
-- Gradle 8.9
-
-Build from the repository root:
-
-```bash
-gradle assembleDebug
-```
-
-Run the native tests on Linux:
-
-```bash
-g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
-  -I app/src/main/cpp \
-  app/src/main/cpp/arm64_interpreter.cpp \
-  app/src/test/cpp/arm64_interpreter_test.cpp \
-  -o astrans-native-tests
-./astrans-native-tests
-```
-
-## Roadmap toward compatibility
-
-1. Expand architectural correctness and implement ARM translation-table descriptors, TLB behaviour, exception levels and interrupt state.
-2. Add SIMD/NEON, floating-point, atomics and a validated CPU execution/JIT backend.
-3. Implement the Switch boot path and system-service/IPC compatibility layer from public, lawful specifications.
-4. Build Tegra X1 GPU command translation, shader translation and a Vulkan renderer.
-5. Add filesystem, audio, controller, timing and save-state systems.
-6. Validate boot and compatibility with software the user is legally authorized to use; only then assess individual game support.
+Local requirements: JDK 17, Android SDK Platform 35, NDK 27.0.12077973, CMake 3.22.1 and Gradle 8.9. The GitHub Actions workflow runs the native tests automatically.
 
 ## Legal scope
 
-AstraNS includes no Nintendo firmware, cryptographic keys, proprietary system files or commercial game data. Use only software and system data you are legally authorized to use. This project does not provide instructions for bypassing DRM or obtaining protected files.
+AstraNS contains no Nintendo firmware, cryptographic keys, proprietary system files or commercial game data. Use only software and system data you are legally authorized to use. The project does not provide instructions for obtaining protected files or bypassing DRM.

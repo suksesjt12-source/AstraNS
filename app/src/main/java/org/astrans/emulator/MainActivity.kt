@@ -14,6 +14,7 @@ import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 
 class MainActivity : Activity() {
@@ -35,9 +36,11 @@ class MainActivity : Activity() {
 
     private external fun nativeRunSelfTest(): Int
     private external fun nativeVulkanInfo(): String
+    private external fun nativeLoadHomebrew(data: ByteArray): String
 
     companion object {
         private const val PICK_GAME = 4102
+        private const val MAX_HOMEBREW_BYTES = 128 * 1024 * 1024
         init { System.loadLibrary("astrans_core") }
     }
 
@@ -71,7 +74,7 @@ class MainActivity : Activity() {
         brand.addView(label("AstraNS", 20f, white, true))
         brand.addView(label("SWITCH EMULATOR WORKSPACE", 9f, muted, true))
         header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(label("1.6", 11f, muted, true).apply {
+        header.addView(label("1.7", 11f, muted, true).apply {
             background = rounded(raised, 18)
             setPadding(dp(12), dp(7), dp(12), dp(7))
         })
@@ -171,7 +174,12 @@ class MainActivity : Activity() {
             name.substringAfterLast('.', "FILE").uppercase(Locale.ROOT) + "  •  " + fileSize(uri),
             11f, muted
         ).apply { setPadding(0, dp(4), 0, dp(5)) })
-        details.addView(label("IMPORTED  ·  NOT PLAYABLE YET", 9f, amber, true))
+        val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val isHomebrewBinary = extension == "nro" || extension == "nso"
+        details.addView(label(
+            if (isHomebrewBinary) "HOMEBREW BINARY  ·  LOADABLE" else "IMPORTED  ·  FORMAT NOT LOADED",
+            9f, if (isHomebrewBinary) green else amber, true
+        ))
         row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(label("›", 25f, muted, true))
         row.setOnClickListener { gameInfo(uri) }
@@ -197,9 +205,49 @@ class MainActivity : Activity() {
                 "include the Switch title loader, Horizon system services or graphics renderer. " +
                 "It cannot launch this game yet."
             )
-            .setPositiveButton("OK", null)
+            .setNegativeButton("Load to guest memory") { _, _ -> loadHomebrew(uri) }
+            .setPositiveButton("Close", null)
             .setNeutralButton("Remove") { _, _ -> removeGame(uri) }
             .show()
+    }
+
+    private fun loadHomebrew(uri: Uri) {
+        val progress = ProgressDialog(this).apply {
+            setMessage("Reading and loading homebrew image…")
+            setCancelable(false)
+            show()
+        }
+        Thread {
+            val status = try {
+                val bytes = contentResolver.openInputStream(uri)?.use { stream ->
+                    val output = ByteArrayOutputStream()
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = stream.read(buffer)
+                        if (count < 0) break
+                        if (output.size().toLong() + count.toLong() > MAX_HOMEBREW_BYTES.toLong()) {
+                            throw IllegalStateException("File exceeds the 128 MiB homebrew loader limit.")
+                        }
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                } ?: throw IllegalStateException("Android could not open the selected file.")
+                nativeLoadHomebrew(bytes)
+            } catch (error: Exception) {
+                "Load failed: " + (error.message ?: "unknown file error")
+            }
+            runOnUiThread {
+                progress.dismiss()
+                AlertDialog.Builder(this)
+                    .setTitle(
+                        if (status.startsWith("NSO image loaded") || status.startsWith("NRO image loaded"))
+                            "Loaded to guest memory" else "Loader result"
+                    )
+                    .setMessage(status)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }.start()
     }
 
     private fun pickGameFile() {
