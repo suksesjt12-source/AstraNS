@@ -265,7 +265,9 @@ int main() {
     write_u32_le(nro_file, 0x30U, 0x2000U);
     write_u32_le(nro_file, 0x34U, 0x1000U);
     write_u32_le(nro_file, 0x38U, 0x80U);
-    write_u32_le(nro_file, 0x00U, 0x14000020U); // Entry stub branches past NRO header.
+    write_u32_le(nro_file, 0x00U, 0x14000020U); // Entry stub branches to code at +0x80.
+    write_u32_le(nro_file, 0x80U, 0xD2800540U); // MOVZ X0, #42
+    write_u32_le(nro_file, 0x84U, 0xD65F03C0U); // RET X30
     nro_file[0x1000U] = 0xA5U;
     nro_file[0x2000U] = 0x5AU;
     GuestMemory nro_memory;
@@ -289,6 +291,13 @@ int main() {
     check(nro_memory.read64(0x103000U, bss_zero) && bss_zero == 0U,
           "NRO BSS is zero-initialized");
     check(!nro_memory.write32(0x100000U, 0U), "NRO text is read-execute after load");
+    CpuState nro_cpu{};
+    nro_cpu.pc = loaded_nro.entry_point;
+    nro_cpu.x[30] = 0x9000U;
+    check(run(nro_cpu, nro_memory, 8U, 0x9000U) == StepResult::StopAddressReached,
+          "execute loaded NRO entry stub through the AArch64 interpreter");
+    check(nro_cpu.x[0] == 42U && nro_cpu.instructions_executed == 3U,
+          "NRO entry branch, MOVZ and RET execute correctly");
 
     GuestMemory rollback_memory;
     check(rollback_memory.map(0x201000U, GuestMemory::kPageSize,
@@ -369,32 +378,38 @@ int main() {
           mod0_error==astrans::Mod0Error::NoModuleHeader,
           "image without MOD0 is reported separately");
 
-    std::vector<uint8_t> nso_file(0x2120U,0U);
+    std::vector<uint8_t> nso_file(0x2130U,0U);
     nso_file[0]='N'; nso_file[1]='S'; nso_file[2]='O'; nso_file[3]='0';
     write_u32_le(nso_file,0x0CU,0x09U);
     write_u32_le(nso_file,0x10U,0x100U);
     write_u32_le(nso_file,0x14U,0x0000U);
     write_u32_le(nso_file,0x18U,0x1000U);
-    write_u32_le(nso_file,0x20U,0x120U);
+    write_u32_le(nso_file,0x20U,0x130U);
     write_u32_le(nso_file,0x24U,0x1000U);
     write_u32_le(nso_file,0x28U,0x1000U);
-    write_u32_le(nso_file,0x30U,0x1120U);
+    write_u32_le(nso_file,0x30U,0x1130U);
     write_u32_le(nso_file,0x34U,0x2000U);
     write_u32_le(nso_file,0x38U,0x1000U);
     write_u32_le(nso_file,0x3CU,0x80U);
-    write_u32_le(nso_file,0x60U,27U);
+    write_u32_le(nso_file,0x60U,36U);
     write_u32_le(nso_file,0x64U,0x1000U);
     write_u32_le(nso_file,0x68U,0x1000U);
     std::size_t lz=0x100U;
-    nso_file[lz++]=0x8FU;
-    const uint8_t text_prefix[8]={0x20U,0x00U,0x00U,0x14U,0x00U,0x00U,0x00U,0x00U};
+    nso_file[lz++]=0xFFU;
+    nso_file[lz++]=1U; // 16 literal bytes.
+    const uint8_t text_prefix[16]={
+        0x04U,0x00U,0x00U,0x14U, // B +0x10
+        0x00U,0x00U,0x00U,0x00U, // MOD0 offset = 0 (no MOD0 header)
+        0xE0U,0x00U,0x80U,0xD2U, // MOVZ X0, #7
+        0xC0U,0x03U,0x5FU,0xD6U  // RET X30
+    };
     for(uint8_t byte:text_prefix) nso_file[lz++]=byte;
     nso_file[lz++]=1U; nso_file[lz++]=0U;
     for(unsigned i=0;i<15U;++i) nso_file[lz++]=0xFFU;
-    nso_file[lz++]=0xF4U;
-    std::fill(nso_file.begin()+0x120,nso_file.begin()+0x1120,0xA5U);
-    std::fill(nso_file.begin()+0x1120,nso_file.end(),0x5AU);
-    const char expected_text_hash[]="228cbea6c64292a7ad41de7bb58a04d1d91d9c9eb52a4bfe29fdc9bb8d9eb763";
+    nso_file[lz++]=0xECU;
+    std::fill(nso_file.begin()+0x130,nso_file.begin()+0x1130,0xA5U);
+    std::fill(nso_file.begin()+0x1130,nso_file.end(),0x5AU);
+    const char expected_text_hash[]="2070575c303797e5b88a0d54736811b45d3f9ffcdcdd10f6a92718c6282ec549";
     for(unsigned i=0;i<32U;++i)
         nso_file[0xA0U+i]=hex_byte(expected_text_hash[i*2U],expected_text_hash[i*2U+1U]);
 
@@ -410,7 +425,7 @@ int main() {
     check(nso_error==astrans::NsoLoadError::None,"NSO loader success status");
     check(loaded_nso.entry_point==0x400000U&&loaded_nso.bss_start==0x403000U,
           "NSO entry point and BSS boundaries");
-    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x14000020U,
+    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x14000004U,
           "NSO LZ4 text is decompressed to executable guest memory");
     check(nso_memory.read(0x401000U,&fetched,1U)&&(fetched&0xFFU)==0xA5U,
           "NSO read-only data is copied");
@@ -418,6 +433,13 @@ int main() {
     check(nso_memory.read(0x402000U,&fetched,1U)&&(fetched&0xFFU)==0x5AU,
           "NSO data is copied");
     check(nso_memory.write32(0x402000U,0x76543210U),"NSO data permission is writable");
+    CpuState nso_cpu{};
+    nso_cpu.pc=loaded_nso.entry_point;
+    nso_cpu.x[30]=0xA000U;
+    check(run(nso_cpu,nso_memory,8U,0xA000U)==StepResult::StopAddressReached,
+          "execute loaded NSO entry stub through the AArch64 interpreter");
+    check(nso_cpu.x[0]==7U && nso_cpu.instructions_executed==3U,
+          "NSO entry branch, MOVZ and RET execute correctly");
     bss_zero=1U;
     check(nso_memory.read64(0x403000U,bss_zero)&&bss_zero==0U,
           "NSO BSS is zero initialized");
