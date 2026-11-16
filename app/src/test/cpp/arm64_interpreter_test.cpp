@@ -23,6 +23,20 @@ uint32_t encode_logical_shifted(bool sf, unsigned opc, bool invert,
            (shift << 22U) | (rm << 16U) | (amount << 10U) |
            (rn << 5U) | rd;
 }
+uint32_t encode_add_sub_extended(bool sf, bool subtract, bool set_flags,
+                                   unsigned rm, unsigned option, unsigned amount,
+                                   unsigned rn, unsigned rd) {
+    return (static_cast<uint32_t>(sf) << 31U) |
+           (static_cast<uint32_t>(subtract) << 30U) |
+           (static_cast<uint32_t>(set_flags) << 29U) | 0x0B200000U |
+           (rm << 16U) | (option << 13U) | (amount << 10U) | (rn << 5U) | rd;
+}
+uint32_t encode_adr(bool page_relative, int64_t immediate, unsigned rd) {
+    const uint64_t imm = static_cast<uint64_t>(immediate) & 0x1FFFFFU;
+    return (page_relative ? 0x90000000U : 0x10000000U) |
+           (static_cast<uint32_t>((imm & 0x3U) << 29U)) |
+           (static_cast<uint32_t>(((imm >> 2U) & 0x7FFFFU) << 5U)) | rd;
+}
 uint32_t encode_pair(bool is_64_bit, bool load, unsigned mode, int immediate,
                       unsigned rt2, unsigned rn, unsigned rt) {
     const unsigned size = is_64_bit ? 2U : 0U;
@@ -189,6 +203,40 @@ int main() {
     check(execute_one(shifts, memory,
           encode_add_sub_shifted(false, false, false, 0U, 1U, 32U, 1U, 0U)) ==
           StepResult::InvalidEncoding, "32-bit shifted ADD rejects shift amounts >= 32");
+
+    CpuState address_cpu{};
+    address_cpu.pc = 0x1600U;
+    check(execute_one(address_cpu, memory, encode_adr(false, 16, 0U)) == StepResult::Executed,
+          "ADR X0, PC + 16");
+    check(address_cpu.x[0] == 0x1610U, "ADR computes PC-relative byte address");
+    address_cpu.pc = 0x12345678U;
+    check(execute_one(address_cpu, memory, encode_adr(true, 1, 1U)) == StepResult::Executed,
+          "ADRP X1, PC page + 1");
+    check(address_cpu.x[1] == 0x12346000U, "ADRP computes page-relative address");
+
+    CpuState extended_alu{};
+    extended_alu.pc = 0x1700U;
+    extended_alu.x[1] = 10U;
+    extended_alu.x[2] = 3U;
+    check(execute_one(extended_alu, memory,
+          encode_add_sub_extended(true, false, false, 2U, 2U, 2U, 1U, 3U)) == StepResult::Executed,
+          "ADD X3, X1, W2, UXTW #2");
+    check(extended_alu.x[3] == 22U, "UXTW extended ADD result");
+    extended_alu.x[2] = 0xFFFFFFFFU;
+    check(execute_one(extended_alu, memory,
+          encode_add_sub_extended(true, false, false, 2U, 6U, 0U, 1U, 4U)) == StepResult::Executed,
+          "ADD X4, X1, W2, SXTW");
+    check(extended_alu.x[4] == 9U, "SXTW sign extends a negative word");
+    extended_alu.x[2] = 0xFFU;
+    check(execute_one(extended_alu, memory,
+          encode_add_sub_extended(true, false, false, 2U, 0U, 0U, 1U, 5U)) == StepResult::Executed,
+          "ADD X5, X1, W2, UXTB");
+    check(extended_alu.x[5] == 265U, "UXTB zero extends a byte");
+    check(execute_one(extended_alu, memory,
+          encode_add_sub_extended(true, true, true, 2U, 2U, 0U, 1U, 6U)) == StepResult::Executed,
+          "SUBS X6, X1, W2, UXTW");
+    check(extended_alu.x[6] == 11U && extended_alu.c && !extended_alu.z,
+          "extended SUBS updates arithmetic flags");
 
     CpuState pair_cpu{};
     pair_cpu.pc = 0x1500U;

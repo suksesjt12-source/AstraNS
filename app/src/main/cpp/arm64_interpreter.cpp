@@ -276,6 +276,53 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
     }
 
 
+    // PC-relative address generation: ADR and ADRP.
+    if ((instruction & 0x1F000000U) == 0x10000000U) {
+        const bool page_relative = (instruction & 0x80000000U) != 0U;
+        const uint64_t immediate =
+            (static_cast<uint64_t>((instruction >> 5U) & 0x7FFFFU) << 2U) |
+            static_cast<uint64_t>((instruction >> 29U) & 0x3U);
+        const int64_t signed_immediate = sign_extend(immediate, 21U);
+        const uint64_t base_address = page_relative ? (old_pc & ~uint64_t{0xFFFU}) : old_pc;
+        const int64_t displacement = page_relative
+            ? signed_immediate * 4096LL : signed_immediate;
+        const uint64_t result = base_address + static_cast<uint64_t>(displacement);
+        write_reg(cpu, instruction & 0x1FU, result, true, false);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
+    // ADD/SUB extended-register. Supports unsigned and signed byte/half/word/xword extensions.
+    if ((instruction & 0x1F200000U) == 0x0B200000U) {
+        const bool is_64_bit = (instruction & 0x80000000U) != 0U;
+        const bool subtract = (instruction & 0x40000000U) != 0U;
+        const bool set_flags = (instruction & 0x20000000U) != 0U;
+        const unsigned rm = (instruction >> 16U) & 0x1FU;
+        const unsigned extend_option = (instruction >> 13U) & 0x7U;
+        const unsigned amount = (instruction >> 10U) & 0x7U;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rd = instruction & 0x1FU;
+        if (amount > 4U || (!is_64_bit && extend_option != 0U &&
+                           extend_option != 1U && extend_option != 2U &&
+                           extend_option != 4U && extend_option != 5U &&
+                           extend_option != 6U)) return StepResult::InvalidEncoding;
+
+        const unsigned source_width = 8U << (extend_option & 0x3U);
+        const uint64_t source_mask = source_width == 64U
+            ? UINT64_MAX : ((uint64_t{1} << source_width) - 1U);
+        uint64_t operand = read_reg(cpu, rm, false) & source_mask;
+        if ((extend_option & 0x4U) != 0U && source_width < 64U)
+            operand = static_cast<uint64_t>(sign_extend(operand, source_width));
+        const uint64_t width_mask = is_64_bit ? UINT64_MAX : 0xFFFFFFFFULL;
+        operand = (operand << amount) & width_mask;
+        const uint64_t lhs = read_reg(cpu, rn, true) & width_mask;
+        const uint64_t result = (subtract ? lhs - operand : lhs + operand) & width_mask;
+        write_reg(cpu, rd, result, is_64_bit, !set_flags);
+        if (set_flags) set_add_sub_flags(cpu, lhs, operand, result, is_64_bit, subtract);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
     // Data-processing (register): ADD/SUB with shifted register operand.
     if ((instruction & 0x1F200000U) == 0x0B000000U) {
         const bool is_64_bit = (instruction & 0x80000000U) != 0U;
