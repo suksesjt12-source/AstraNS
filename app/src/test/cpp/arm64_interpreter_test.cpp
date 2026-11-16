@@ -16,6 +16,7 @@ void check(bool condition, const char* message) {
 int main() {
     using astrans::CpuState;
     using astrans::GuestMemory;
+    using astrans::GuestAddressSpace;
     using astrans::MemoryPermission;
     using astrans::StepResult;
     using astrans::execute_one;
