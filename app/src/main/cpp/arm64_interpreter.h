@@ -8,23 +8,43 @@
 
 namespace astrans {
 
+enum class MemoryPermission : uint8_t {
+    None = 0,
+    Read = 1,
+    Write = 2,
+    Execute = 4,
+};
+
+constexpr MemoryPermission operator|(MemoryPermission left, MemoryPermission right) noexcept {
+    return static_cast<MemoryPermission>(static_cast<uint8_t>(left) | static_cast<uint8_t>(right));
+}
+
 class GuestMemory {
 public:
-    GuestMemory(uint64_t base_address, std::size_t size);
+    static constexpr std::size_t kPageSize = 4096;
 
-    uint64_t base_address() const noexcept;
+    GuestMemory() = default;
+    bool map(uint64_t base_address, std::size_t size, MemoryPermission permissions);
+    bool unmap(uint64_t base_address);
+    bool protect(uint64_t base_address, std::size_t size, MemoryPermission permissions);
     std::size_t size() const noexcept;
     bool contains(uint64_t address, std::size_t length) const noexcept;
     bool read(uint64_t address, void* destination, std::size_t length) const noexcept;
     bool write(uint64_t address, const void* source, std::size_t length) noexcept;
     bool read32(uint64_t address, uint32_t& value) const noexcept;
+    bool fetch32(uint64_t address, uint32_t& value) const noexcept;
     bool write32(uint64_t address, uint32_t value) noexcept;
     bool read64(uint64_t address, uint64_t& value) const noexcept;
     bool write64(uint64_t address, uint64_t value) noexcept;
 
 private:
-    uint64_t base_address_;
-    std::vector<uint8_t> bytes_;
+    struct Region {
+        uint64_t base_address;
+        std::vector<uint8_t> bytes;
+        MemoryPermission permissions;
+    };
+
+    std::vector<Region> regions_;
 };
 
 struct CpuState {
