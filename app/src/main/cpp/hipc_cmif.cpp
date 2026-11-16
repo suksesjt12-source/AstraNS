@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace astrans {
 namespace {
@@ -340,6 +341,112 @@ const CmifServiceHandler* CmifDomainTable::get(uint32_t object_id) const noexcep
 }
 
 std::size_t CmifDomainTable::size() const noexcept { return objects_.size(); }
+
+
+bool parse_tipc_request(const uint8_t* data, std::size_t size,
+                        const HipcMessage& message,
+                        TipcRequest& request, HipcError& error) {
+    request = {};
+    error = HipcError::None;
+    if (data == nullptr) {
+        error = HipcError::NullInput;
+        return false;
+    }
+    if (message.raw_data_offset > size ||
+        message.raw_data_size > size - message.raw_data_offset) {
+        error = HipcError::TruncatedRawData;
+        return false;
+    }
+    request.command_id = message.message_type;
+    request.payload = data + message.raw_data_offset;
+    request.payload_size = message.raw_data_size;
+    return true;
+}
+
+bool encode_service_name(const std::string& name,
+                         std::array<uint8_t, 8>& encoded) noexcept {
+    encoded.fill(0U);
+    if (name.empty() || name.size() > encoded.size()) return false;
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        const unsigned char value = static_cast<unsigned char>(name[i]);
+        if (value == 0U || value > 0x7FU) return false;
+        encoded[i] = static_cast<uint8_t>(value);
+    }
+    return true;
+}
+
+bool decode_service_name(const uint8_t* encoded, std::size_t size,
+                         std::string& name) noexcept {
+    name.clear();
+    if (encoded == nullptr || size != 8U) return false;
+    bool saw_zero = false;
+    for (std::size_t i = 0; i < 8U; ++i) {
+        if (encoded[i] == 0U) {
+            saw_zero = true;
+            continue;
+        }
+        if (saw_zero || encoded[i] > 0x7FU) {
+            name.clear();
+            return false;
+        }
+        name.push_back(static_cast<char>(encoded[i]));
+    }
+    return !name.empty();
+}
+
+bool SmServiceRegistry::register_service(const std::string& name, bool is_light,
+                                          int32_t max_sessions) {
+    std::array<uint8_t, 8> encoded{};
+    if (!encode_service_name(name, encoded) || max_sessions <= 0 ||
+        services_.find(name) != services_.end()) return false;
+    services_.emplace(name, Entry{is_light, max_sessions, 0});
+    return true;
+}
+
+bool SmServiceRegistry::unregister_service(const std::string& name) {
+    const auto it = services_.find(name);
+    if (it == services_.end() || it->second.active_sessions != 0) return false;
+    services_.erase(it);
+    return true;
+}
+
+bool SmServiceRegistry::get_service_handle(const std::string& name,
+                                            IpcHandleTable& handles,
+                                            uint32_t& handle) {
+    handle = 0U;
+    const auto it = services_.find(name);
+    if (it == services_.end() ||
+        it->second.active_sessions >= it->second.max_sessions) return false;
+    auto session = std::make_shared<IpcKernelObject>(IpcObjectType::Session);
+    const uint32_t created = handles.insert(std::move(session));
+    if (created == 0U) return false;
+    session_handles_.emplace(created, name);
+    ++it->second.active_sessions;
+    handle = created;
+    return true;
+}
+
+bool SmServiceRegistry::close_service_handle(uint32_t handle,
+                                              IpcHandleTable& handles) {
+    const auto session = session_handles_.find(handle);
+    if (session == session_handles_.end()) return false;
+    const auto service = services_.find(session->second);
+    if (service == services_.end() || service->second.active_sessions <= 0) return false;
+    if (!handles.close(handle)) return false;
+    --service->second.active_sessions;
+    session_handles_.erase(session);
+    return true;
+}
+
+std::size_t SmServiceRegistry::service_count() const noexcept {
+    return services_.size();
+}
+
+std::size_t SmServiceRegistry::active_session_count(const std::string& name) const noexcept {
+    const auto it = services_.find(name);
+    return it == services_.end() ? 0U :
+        static_cast<std::size_t>(it->second.active_sessions);
+}
 
 bool CmifServiceManager::register_service(const std::string& name,
                                            CmifServiceHandler handler) {

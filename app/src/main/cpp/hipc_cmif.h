@@ -1,6 +1,7 @@
 #ifndef ASTRANS_HIPC_CMIF_H
 #define ASTRANS_HIPC_CMIF_H
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -102,6 +103,41 @@ public:
 private:
     uint32_t next_handle_ = 1U;
     std::map<uint32_t, std::shared_ptr<IpcKernelObject>> handles_;
+};
+
+
+struct TipcRequest {
+    uint16_t command_id = 0;
+    const uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+};
+
+bool parse_tipc_request(const uint8_t* data, std::size_t size,
+                        const HipcMessage& message,
+                        TipcRequest& request, HipcError& error);
+bool encode_service_name(const std::string& name,
+                         std::array<uint8_t, 8>& encoded) noexcept;
+bool decode_service_name(const uint8_t* encoded, std::size_t size,
+                         std::string& name) noexcept;
+
+class SmServiceRegistry {
+public:
+    bool register_service(const std::string& name, bool is_light,
+                          int32_t max_sessions);
+    bool unregister_service(const std::string& name);
+    bool get_service_handle(const std::string& name, IpcHandleTable& handles,
+                            uint32_t& handle);
+    bool close_service_handle(uint32_t handle, IpcHandleTable& handles);
+    std::size_t service_count() const noexcept;
+    std::size_t active_session_count(const std::string& name) const noexcept;
+private:
+    struct Entry {
+        bool is_light = false;
+        int32_t max_sessions = 0;
+        int32_t active_sessions = 0;
+    };
+    std::map<std::string, Entry> services_;
+    std::map<uint32_t, std::string> session_handles_;
 };
 
 class CmifDomainTable {

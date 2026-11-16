@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <array>
 #include <memory>
 
 namespace {
@@ -411,6 +412,62 @@ int main() {
           ipc_error==astrans::HipcError::ServiceNotFound,
           "CMIF dispatcher reports unregistered service");
 
+
+
+    // TIPC exposes the command ID in the HIPC Header0 tag and raw payload directly.
+    std::vector<uint8_t> tipc_wire(24U,0U);
+    write_u32_le(tipc_wire,0U,1U);
+    write_u32_le(tipc_wire,4U,2U);
+    write_u32_le(tipc_wire,16U,0x74657374U);
+    write_u32_le(tipc_wire,20U,0x00000031U);
+    astrans::HipcMessage tipc_envelope{};
+    check(astrans::parse_hipc_message(tipc_wire.data(),tipc_wire.size(),
+                                      tipc_envelope,ipc_error),
+          "parse HIPC envelope for TIPC message");
+    astrans::TipcRequest tipc_request{};
+    check(astrans::parse_tipc_request(tipc_wire.data(),tipc_wire.size(),
+                                      tipc_envelope,tipc_request,ipc_error),
+          "parse TIPC request");
+    check(tipc_request.command_id==1U && tipc_request.payload_size==8U &&
+          read_u32_le(tipc_request.payload)==0x74657374U,
+          "TIPC command id and raw payload");
+
+    std::array<uint8_t,8> service_name_bytes{};
+    check(astrans::encode_service_name("set:sys",service_name_bytes),
+          "encode ServiceName into fixed eight-byte value");
+    std::string decoded_service_name;
+    check(astrans::decode_service_name(service_name_bytes.data(),service_name_bytes.size(),
+                                       decoded_service_name) &&
+          decoded_service_name=="set:sys","decode zero-padded ServiceName");
+    check(!astrans::encode_service_name("toolongname",service_name_bytes),
+          "reject ServiceName longer than eight bytes");
+
+    astrans::SmServiceRegistry sm_registry;
+    astrans::IpcHandleTable sm_handles;
+    check(sm_registry.register_service("set:sys",true,2),
+          "register Service Manager service with session limit");
+    uint32_t service_handle_a=0U,service_handle_b=0U,service_handle_c=0U;
+    check(sm_registry.get_service_handle("set:sys",sm_handles,service_handle_a) &&
+          sm_registry.get_service_handle("set:sys",sm_handles,service_handle_b),
+          "get two service session handles");
+    check(service_handle_a!=service_handle_b &&
+          sm_registry.active_session_count("set:sys")==2U,
+          "service manager tracks active session count");
+    check(!sm_registry.get_service_handle("set:sys",sm_handles,service_handle_c),
+          "service manager enforces maximum sessions");
+    check(!sm_registry.unregister_service("set:sys"),
+          "cannot unregister a service with active sessions");
+    check(sm_registry.close_service_handle(service_handle_a,sm_handles) &&
+          sm_registry.active_session_count("set:sys")==1U,
+          "closing service session decrements active count");
+    check(sm_registry.get_service_handle("set:sys",sm_handles,service_handle_c),
+          "freed session slot can be reused");
+    check(sm_registry.close_service_handle(service_handle_b,sm_handles) &&
+          sm_registry.close_service_handle(service_handle_c,sm_handles),
+          "close all service sessions");
+    check(sm_registry.unregister_service("set:sys") &&
+          sm_registry.service_count()==0U,
+          "unregister service after all sessions close");
 
     // CMIF domain request carries a 16-byte domain header, nested CMIF, and object IDs.
     std::vector<uint8_t> domain_hipc(80U, 0U);
