@@ -4,34 +4,100 @@
 
 namespace astrans {
 
-GuestMemory::GuestMemory(uint64_t base_address, std::size_t size)
-    : base_address_(base_address), bytes_(size, 0) {}
+namespace {
 
-uint64_t GuestMemory::base_address() const noexcept { return base_address_; }
-std::size_t GuestMemory::size() const noexcept { return bytes_.size(); }
+bool permission_allows(MemoryPermission available, MemoryPermission required) {
+    const auto bits = static_cast<uint8_t>(available);
+    const auto requested = static_cast<uint8_t>(required);
+    return (bits & requested) == requested;
+}
+
+bool region_contains(uint64_t base, std::size_t region_size,
+                     uint64_t address, std::size_t length) {
+    if (address < base) return false;
+    const uint64_t offset64 = address - base;
+    if (offset64 > static_cast<uint64_t>(region_size)) return false;
+    const std::size_t offset = static_cast<std::size_t>(offset64);
+    return length <= region_size - offset;
+}
+
+}  // namespace
+
+bool GuestMemory::map(uint64_t base_address, std::size_t region_size,
+                      MemoryPermission permissions) {
+    if (region_size == 0 || region_size % kPageSize != 0 ||
+        base_address % kPageSize != 0 || permissions == MemoryPermission::None) {
+        return false;
+    }
+    const uint64_t size64 = static_cast<uint64_t>(region_size);
+    if (base_address > UINT64_MAX - size64) return false;
+    const uint64_t end = base_address + size64;
+    for (const Region& region : regions_) {
+        const uint64_t existing_end = region.base_address + region.bytes.size();
+        if (base_address < existing_end && region.base_address < end) return false;
+    }
+    regions_.push_back(Region{base_address, std::vector<uint8_t>(region_size, 0), permissions});
+    return true;
+}
+
+bool GuestMemory::unmap(uint64_t base_address) {
+    for (auto it = regions_.begin(); it != regions_.end(); ++it) {
+        if (it->base_address == base_address) {
+            regions_.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool GuestMemory::protect(uint64_t base_address, std::size_t region_size,
+                          MemoryPermission permissions) {
+    if (permissions == MemoryPermission::None) return false;
+    for (Region& region : regions_) {
+        if (region.base_address == base_address && region.bytes.size() == region_size) {
+            region.permissions = permissions;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t GuestMemory::size() const noexcept {
+    std::size_t total = 0;
+    for (const Region& region : regions_) total += region.bytes.size();
+    return total;
+}
 
 bool GuestMemory::contains(uint64_t address, std::size_t length) const noexcept {
-    if (address < base_address_) return false;
-    const uint64_t offset64 = address - base_address_;
-    if (offset64 > static_cast<uint64_t>(bytes_.size())) return false;
-    const std::size_t offset = static_cast<std::size_t>(offset64);
-    return length <= bytes_.size() - offset;
+    for (const Region& region : regions_) {
+        if (region_contains(region.base_address, region.bytes.size(), address, length))
+            return true;
+    }
+    return false;
 }
 
 bool GuestMemory::read(uint64_t address, void* destination, std::size_t length) const noexcept {
     if (destination == nullptr && length != 0) return false;
-    if (!contains(address, length)) return false;
-    const std::size_t offset = static_cast<std::size_t>(address - base_address_);
-    if (length != 0) std::memcpy(destination, bytes_.data() + offset, length);
-    return true;
+    for (const Region& region : regions_) {
+        if (!region_contains(region.base_address, region.bytes.size(), address, length)) continue;
+        if (!permission_allows(region.permissions, MemoryPermission::Read)) return false;
+        const std::size_t offset = static_cast<std::size_t>(address - region.base_address);
+        if (length != 0) std::memcpy(destination, region.bytes.data() + offset, length);
+        return true;
+    }
+    return false;
 }
 
 bool GuestMemory::write(uint64_t address, const void* source, std::size_t length) noexcept {
     if (source == nullptr && length != 0) return false;
-    if (!contains(address, length)) return false;
-    const std::size_t offset = static_cast<std::size_t>(address - base_address_);
-    if (length != 0) std::memcpy(bytes_.data() + offset, source, length);
-    return true;
+    for (Region& region : regions_) {
+        if (!region_contains(region.base_address, region.bytes.size(), address, length)) continue;
+        if (!permission_allows(region.permissions, MemoryPermission::Write)) return false;
+        const std::size_t offset = static_cast<std::size_t>(address - region.base_address);
+        if (length != 0) std::memcpy(region.bytes.data() + offset, source, length);
+        return true;
+    }
+    return false;
 }
 
 bool GuestMemory::read32(uint64_t address, uint32_t& value) const noexcept {
@@ -42,6 +108,22 @@ bool GuestMemory::read32(uint64_t address, uint32_t& value) const noexcept {
             (static_cast<uint32_t>(raw[2]) << 16U) |
             (static_cast<uint32_t>(raw[3]) << 24U);
     return true;
+}
+
+bool GuestMemory::fetch32(uint64_t address, uint32_t& value) const noexcept {
+    uint8_t raw[4]{};
+    for (const Region& region : regions_) {
+        if (!region_contains(region.base_address, region.bytes.size(), address, sizeof(raw))) continue;
+        if (!permission_allows(region.permissions, MemoryPermission::Execute)) return false;
+        const std::size_t offset = static_cast<std::size_t>(address - region.base_address);
+        std::memcpy(raw, region.bytes.data() + offset, sizeof(raw));
+        value = static_cast<uint32_t>(raw[0]) |
+                (static_cast<uint32_t>(raw[1]) << 8U) |
+                (static_cast<uint32_t>(raw[2]) << 16U) |
+                (static_cast<uint32_t>(raw[3]) << 24U);
+        return true;
+    }
+    return false;
 }
 
 bool GuestMemory::write32(uint64_t address, uint32_t value) noexcept {
@@ -128,7 +210,6 @@ StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
-    // MOVZ, MOVN and MOVK (W/X register forms).
     const uint32_t move_opcode = instruction & 0x7F800000U;
     if (move_opcode == 0x52800000U || move_opcode == 0x12800000U ||
         move_opcode == 0x72800000U) {
@@ -154,7 +235,6 @@ StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
-    // ADD/SUB (immediate), including flag-setting forms and SP operands.
     if ((instruction & 0x1F000000U) == 0x11000000U) {
         const bool is_64_bit = (instruction & 0x80000000U) != 0;
         const bool subtract = (instruction & 0x40000000U) != 0;
@@ -184,7 +264,6 @@ StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
-    // Integer load/store, unsigned immediate, byte/halfword/word/doubleword.
     if ((instruction & 0x3B000000U) == 0x39000000U) {
         const unsigned size_code = (instruction >> 30U) & 0x3U;
         const unsigned access_size = 1U << size_code;
@@ -215,7 +294,6 @@ StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
-    // B / BL, signed PC-relative 26-bit word offset.
     if ((instruction & 0x7C000000U) == 0x14000000U) {
         const int64_t offset = sign_extend(instruction & 0x03FFFFFFU, 26U) * 4;
         if ((instruction & 0x80000000U) != 0) cpu.x[30] = old_pc + 4U;
@@ -223,7 +301,6 @@ StepResult execute_one(CpuState& cpu, GuestMemory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
-    // B.cond, signed PC-relative 19-bit word offset.
     if ((instruction & 0xFF000010U) == 0x54000000U) {
         const unsigned condition = instruction & 0xFU;
         const int64_t offset = sign_extend((instruction >> 5U) & 0x7FFFFU, 19U) * 4;
@@ -248,7 +325,7 @@ StepResult run(CpuState& cpu, GuestMemory& memory, uint64_t max_steps,
     while (steps < max_steps) {
         if (cpu.pc == stop_address) return StepResult::StopAddressReached;
         uint32_t instruction = 0;
-        if (!memory.read32(cpu.pc, instruction)) return StepResult::MemoryFault;
+        if (!memory.fetch32(cpu.pc, instruction)) return StepResult::MemoryFault;
         const StepResult result = execute_one(cpu, memory, instruction);
         if (result != StepResult::Executed) return result;
         ++steps;
@@ -260,22 +337,28 @@ StepResult run(CpuState& cpu, GuestMemory& memory, uint64_t max_steps,
 int run_self_test() {
     constexpr uint64_t kCodeBase = 0x1000U;
     constexpr uint64_t kDataBase = 0x2000U;
-    GuestMemory memory(kCodeBase, 0x2000U);
+    GuestMemory memory;
+    const MemoryPermission code_rw = MemoryPermission::Read | MemoryPermission::Write | MemoryPermission::Execute;
+    const MemoryPermission data_rw = MemoryPermission::Read | MemoryPermission::Write;
+    if (!memory.map(kCodeBase, GuestMemory::kPageSize, code_rw) ||
+        !memory.map(kDataBase, GuestMemory::kPageSize, data_rw)) return -1;
     constexpr uint32_t program[] = {
-        0xD28000E0U,  // MOVZ X0, #7
-        0x91001400U,  // ADD X0, X0, #5
-        0xF9000020U,  // STR X0, [X1]
-        0xF9400022U,  // LDR X2, [X1]
-        0x94000004U,  // BL +16 bytes to subroutine
-        0xD503201FU,  // NOP after returning from subroutine
-        0xD503201FU,  // Stop address follows this instruction
-        0xD503201FU,  // Padding
-        0x91000442U,  // ADD X2, X2, #1 (subroutine)
-        0xD65F03C0U,  // RET
+        0xD28000E0U,
+        0x91001400U,
+        0xF9000020U,
+        0xF9400022U,
+        0x94000004U,
+        0xD503201FU,
+        0xD503201FU,
+        0xD503201FU,
+        0x91000442U,
+        0xD65F03C0U,
     };
     for (std::size_t i = 0; i < sizeof(program) / sizeof(program[0]); ++i) {
         if (!memory.write32(kCodeBase + i * 4U, program[i])) return -1;
     }
+    if (!memory.protect(kCodeBase, GuestMemory::kPageSize,
+                        MemoryPermission::Read | MemoryPermission::Execute)) return -1;
     CpuState cpu{};
     cpu.pc = kCodeBase;
     cpu.x[1] = kDataBase;
