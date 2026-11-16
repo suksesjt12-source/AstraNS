@@ -404,7 +404,7 @@ int main() {
     const bool nso_loaded = astrans::load_nso(nso_memory,nso_file.data(),nso_file.size(),
                                                  0x400000U,loaded_nso,nso_error);
     if (!nso_loaded) {
-        std::cerr << "NSO load error code: " << static_cast<unsigned>(nso_error) << '\\n';
+        std::cerr << "NSO load error code: " << static_cast<unsigned>(nso_error) << std::endl;
     }
     check(nso_loaded, "load NSO with LZ4 text and requested SHA-256 validation");
     check(nso_error==astrans::NsoLoadError::None,"NSO loader success status");
