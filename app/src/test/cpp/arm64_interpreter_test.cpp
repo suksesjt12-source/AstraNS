@@ -23,6 +23,14 @@ uint32_t encode_logical_shifted(bool sf, unsigned opc, bool invert,
            (shift << 22U) | (rm << 16U) | (amount << 10U) |
            (rn << 5U) | rd;
 }
+uint32_t encode_pair(bool is_64_bit, bool load, unsigned mode, int immediate,
+                      unsigned rt2, unsigned rn, unsigned rt) {
+    const unsigned size = is_64_bit ? 2U : 0U;
+    const unsigned scaled = static_cast<unsigned>(immediate / (is_64_bit ? 8 : 4)) & 0x7FU;
+    return (size << 30U) | 0x28000000U | (mode << 23U) |
+           (static_cast<uint32_t>(load) << 22U) | (scaled << 15U) |
+           (rt2 << 10U) | (rn << 5U) | rt;
+}
 uint32_t encode_csel(bool sf, unsigned rm, unsigned condition, unsigned rn, unsigned rd) {
     return (static_cast<uint32_t>(sf) << 31U) | 0x1A800000U |
            (rm << 16U) | (condition << 12U) | (rn << 5U) | rd;
@@ -181,6 +189,57 @@ int main() {
     check(execute_one(shifts, memory,
           encode_add_sub_shifted(false, false, false, 0U, 1U, 32U, 1U, 0U)) ==
           StepResult::InvalidEncoding, "32-bit shifted ADD rejects shift amounts >= 32");
+
+    CpuState pair_cpu{};
+    pair_cpu.pc = 0x1500U;
+    pair_cpu.x[1] = 0x2800U;
+    pair_cpu.x[2] = 0x1122334455667788ULL;
+    pair_cpu.x[3] = 0x8877665544332211ULL;
+    check(execute_one(pair_cpu, memory,
+          encode_pair(true, false, 2U, 16, 3U, 1U, 2U)) == StepResult::Executed,
+          "STP X2, X3, [X1, #16]");
+    check(memory.read64(0x2810U, memory_value) && memory_value == pair_cpu.x[2],
+          "STP writes first 64-bit register");
+    check(memory.read64(0x2818U, memory_value) && memory_value == pair_cpu.x[3],
+          "STP writes second 64-bit register");
+    check(execute_one(pair_cpu, memory,
+          encode_pair(true, true, 2U, 16, 5U, 1U, 4U)) == StepResult::Executed,
+          "LDP X4, X5, [X1, #16]");
+    check(pair_cpu.x[4] == pair_cpu.x[2] && pair_cpu.x[5] == pair_cpu.x[3],
+          "LDP restores both registers");
+
+    pair_cpu.sp = 0x2900U;
+    check(execute_one(pair_cpu, memory, 0xA9BF7BFDU) == StepResult::Executed,
+          "STP X29, X30, [SP, #-16]!");
+    check(pair_cpu.sp == 0x28F0U, "pre-index pair store updates SP before access");
+    pair_cpu.x[29] = 0U;
+    pair_cpu.x[30] = 0U;
+    check(execute_one(pair_cpu, memory, 0xA8C17BFDU) == StepResult::Executed,
+          "LDP X29, X30, [SP], #16");
+    check(pair_cpu.x[29] == 0U, "post-index pair load restores saved frame pointer");
+    check(pair_cpu.x[30] == 0U && pair_cpu.sp == 0x2900U,
+          "post-index pair load restores link register and SP");
+
+    pair_cpu.x[6] = 0xFFFFFFFFU;
+    pair_cpu.x[7] = 0x80000000U;
+    check(execute_one(pair_cpu, memory,
+          encode_pair(false, false, 2U, 8, 7U, 1U, 6U)) == StepResult::Executed,
+          "store 32-bit register pair");
+    check(execute_one(pair_cpu, memory,
+          encode_pair(false, true, 2U, 8, 9U, 1U, 8U)) == StepResult::Executed,
+          "LDP W8, W9, [X1, #8]");
+    check(pair_cpu.x[8] == 0xFFFFFFFFU && pair_cpu.x[9] == 0x80000000U,
+          "32-bit pair loads zero-extend");
+
+    const uint64_t original_base = pair_cpu.x[1];
+    check(execute_one(pair_cpu, memory,
+          encode_pair(true, false, 3U, -16, 3U, 1U, 2U)) == StepResult::Executed,
+          "pre-indexed STP pair");
+    check(pair_cpu.x[1] == original_base - 16U, "pre-indexed pair writes back base");
+    check(execute_one(pair_cpu, memory,
+          encode_pair(true, true, 1U, 16, 5U, 1U, 4U)) == StepResult::Executed,
+          "post-indexed LDP pair");
+    check(pair_cpu.x[1] == original_base, "post-indexed pair writes back base");
 
     check(astrans::run_self_test() == 12, "integrated guest program passes");
 

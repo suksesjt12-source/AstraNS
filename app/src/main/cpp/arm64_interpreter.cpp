@@ -365,6 +365,66 @@ StepResult execute_one_impl(CpuState& cpu, Memory& memory, uint32_t instruction)
         return StepResult::Executed;
     }
 
+    // General-purpose load/store pair (LDP/STP and LDPSW).
+    if ((instruction & 0x3A000000U) == 0x28000000U &&
+        (instruction & 0x04000000U) == 0U) {
+        const unsigned size_field = (instruction >> 30U) & 0x3U;
+        if (size_field == 3U) return StepResult::InvalidEncoding;
+        const bool load = (instruction & 0x00400000U) != 0U;
+        if (size_field == 1U && !load) return StepResult::InvalidEncoding;
+        const unsigned element_size = size_field == 2U ? 8U : 4U;
+        const bool sign_extend_word = size_field == 1U;
+        const unsigned mode = (instruction >> 23U) & 0x3U;
+        const int64_t immediate = sign_extend((instruction >> 15U) & 0x7FU, 7U) *
+                                  static_cast<int64_t>(element_size);
+        const unsigned rt2 = (instruction >> 10U) & 0x1FU;
+        const unsigned rn = (instruction >> 5U) & 0x1FU;
+        const unsigned rt = instruction & 0x1FU;
+        const bool writeback = mode == 1U || mode == 3U;
+        if (writeback && (rn == rt || rn == rt2) && rn != 31U)
+            return StepResult::InvalidEncoding;
+
+        const uint64_t base = read_reg(cpu, rn, true);
+        uint64_t updated_base = base;
+        if (immediate >= 0) {
+            const uint64_t positive = static_cast<uint64_t>(immediate);
+            if (base > UINT64_MAX - positive) return StepResult::MemoryFault;
+            updated_base = base + positive;
+        } else {
+            const uint64_t magnitude = static_cast<uint64_t>(-(immediate + 1)) + 1U;
+            if (base < magnitude) return StepResult::MemoryFault;
+            updated_base = base - magnitude;
+        }
+        const uint64_t address = mode == 3U ? updated_base : base;
+        uint8_t raw[16]{};
+        if (load) {
+            if (!memory.read(address, raw, element_size * 2U)) return StepResult::MemoryFault;
+            uint64_t first = 0U;
+            uint64_t second = 0U;
+            for (unsigned i = 0; i < element_size; ++i) {
+                first |= static_cast<uint64_t>(raw[i]) << (i * 8U);
+                second |= static_cast<uint64_t>(raw[element_size + i]) << (i * 8U);
+            }
+            if (sign_extend_word) {
+                first = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(first)));
+                second = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(second)));
+            }
+            write_reg(cpu, rt, first, sign_extend_word || element_size == 8U, false);
+            write_reg(cpu, rt2, second, sign_extend_word || element_size == 8U, false);
+        } else {
+            const uint64_t first = read_reg(cpu, rt, false);
+            const uint64_t second = read_reg(cpu, rt2, false);
+            for (unsigned i = 0; i < element_size; ++i) {
+                raw[i] = static_cast<uint8_t>(first >> (i * 8U));
+                raw[element_size + i] = static_cast<uint8_t>(second >> (i * 8U));
+            }
+            if (!memory.write(address, raw, element_size * 2U)) return StepResult::MemoryFault;
+        }
+        if (writeback) write_reg(cpu, rn, updated_base, true, true);
+        cpu.pc += 4U;
+        return StepResult::Executed;
+    }
+
     if ((instruction & 0x3B000000U) == 0x39000000U) {
         const unsigned size_code = (instruction >> 30U) & 0x3U;
         const unsigned access_size = 1U << size_code;

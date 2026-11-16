@@ -14,9 +14,9 @@ Implemented:
 - AArch64 instruction fetch, loads/stores and the CPU run loop can execute through translated virtual addresses.
 - Checked guest-memory access and little-endian 32/64-bit reads and writes.
 - A bounded fetch/decode/execute loop with instruction budget and deterministic stop-address support.
-- Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate and shifted-register forms with NZCV flags; AND/ORR/EOR/ANDS shifted-register forms; CSEL; unsigned-immediate integer LDR/STR; B, BL, B.cond and RET.
+- Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate and shifted-register forms with NZCV flags; AND/ORR/EOR/ANDS shifted-register forms; CSEL; unsigned-immediate integer LDR/STR; GPR LDP/STP/LDPSW pair operations with offset/pre/post addressing; B, BL, B.cond and RET.
 - Native Vulkan probe that creates a Vulkan instance and reports physical GPU names, device type, API version, device-local heap size, queue capabilities and swapchain-extension availability.
-- Host tests for physical memory, virtual mappings and aliases, permission enforcement, cross-page access, failed boundary writes, translated instruction fetch, shifted arithmetic/logical operations, CSEL, flags, branches, instruction budgets and memory faults.
+- Host tests for physical memory, virtual mappings and aliases, permission enforcement, cross-page access, failed boundary writes, translated instruction fetch, shifted arithmetic/logical operations, CSEL, pair loads/stores and writeback, flags, branches, instruction budgets and memory faults.
 - GitHub Actions that run native tests before building and uploading an arm64-v8a debug APK.
 
 ## Important limitations
