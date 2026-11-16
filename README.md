@@ -1,22 +1,22 @@
 # AstraNS
 
-AstraNS is an original Android-first emulator research project. The Android shell is Kotlin; the experimental guest CPU and memory core is C++20.
+AstraNS is an original Android-first emulator research project. The Android shell is Kotlin; the experimental guest CPU, memory and diagnostic code is C++20.
 
-## Current status: 0.4.0 — mapped guest memory foundation
+## Current status: 0.5.0 — guest execution and Vulkan capability probe
 
 Implemented:
 - Android application shell and JNI bridge.
 - Page-aligned guest memory regions with overlap checks and independent Read, Write and Execute permissions.
-- Permission changes for a mapped region, including changing a code page from writable during loading to read/execute for guest instruction fetch.
 - Checked guest-memory access and little-endian 32/64-bit reads and writes.
 - A bounded fetch/decode/execute loop with instruction budget and deterministic stop-address support.
-- Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate with basic NZCV flags; unsigned-immediate integer LDR/STR for byte, halfword, word and doubleword; B, BL, B.cond and RET.
-- Host tests covering memory mapping, overlap and alignment rejection, access permissions, register operations, loads/stores, branches, instruction budgets and faults.
-- GitHub Actions that run native tests before building an arm64-v8a debug APK.
+- Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate with basic NZCV flags; unsigned-immediate integer LDR/STR; B, BL, B.cond and RET.
+- Native Vulkan probe that creates a Vulkan instance and reports physical GPU names, device type, API version, device-local heap size, queue capabilities and swapchain-extension availability.
+- Host tests for memory mapping, access permissions, register operations, loads/stores, branches, instruction budgets and faults.
+- GitHub Actions that run native tests before building and uploading an arm64-v8a debug APK.
 
 ## Important limitations
 
-**AstraNS is not yet a Nintendo Switch emulator and cannot run Hollow Knight or other Switch games.** The current memory regions are a basic guest address-space abstraction, not a complete ARM MMU or Switch memory manager.
+**AstraNS is not yet a Nintendo Switch emulator and cannot run Hollow Knight or other Switch games.** The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
 
 Not implemented:
 - Full ARMv8-A instruction coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, page tables or JIT.
@@ -63,10 +63,10 @@ g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
 
 ## Roadmap toward compatibility
 
-1. Expand and validate AArch64 behavior, including SIMD/NEON, atomics, exceptions and exact architectural edge cases.
+1. Complete more of ARMv8-A, including SIMD/NEON, atomics, exceptions and exact architectural edge cases.
 2. Build proper address translation, page tables, MMU permissions, exception levels and interrupt state.
 3. Implement a Switch-like kernel/service and IPC compatibility layer from public, lawful specifications.
-4. Build a GPU command-translation architecture and shader pipeline; validate Vulkan support on Mali-class devices.
+4. Use the Vulkan probe results to build a GPU command-translation and shader pipeline.
 5. Add filesystem, audio, controller, timing and save-state systems.
 6. Test boot and compatibility with software the user is legally authorized to use; only then assess individual game support.
 
