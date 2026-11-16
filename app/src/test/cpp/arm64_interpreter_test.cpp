@@ -387,14 +387,14 @@ int main() {
     write_u32_le(nso_file,0x68U,0x1000U);
     std::size_t lz=0x100U;
     nso_file[lz++]=0x8FU;
-    const uint8_t text_prefix[8]={0x20U,0x00U,0x00U,0x14U,0x00U,0x00U,0x00U,0x41U};
+    const uint8_t text_prefix[8]={0x20U,0x00U,0x00U,0x14U,0x00U,0x00U,0x00U,0x00U};
     for(uint8_t byte:text_prefix) nso_file[lz++]=byte;
     nso_file[lz++]=1U; nso_file[lz++]=0U;
     for(unsigned i=0;i<15U;++i) nso_file[lz++]=0xFFU;
     nso_file[lz++]=0xF4U;
     std::fill(nso_file.begin()+0x120,nso_file.begin()+0x1120,0xA5U);
     std::fill(nso_file.begin()+0x1120,nso_file.end(),0x5AU);
-    const char expected_text_hash[]="64a59bf9881dd66793e864ebe989d30db9e8d13562b2a70baf102ee19c3967c7";
+    const char expected_text_hash[]="228cbea6c64292a7ad41de7bb58a04d1d91d9c9eb52a4bfe29fdc9bb8d9eb763";
     for(unsigned i=0;i<32U;++i)
         nso_file[0xA0U+i]=hex_byte(expected_text_hash[i*2U],expected_text_hash[i*2U+1U]);
 
