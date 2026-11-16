@@ -235,8 +235,8 @@ int main() {
     check(execute_one(extended_alu, memory,
           encode_add_sub_extended(true, true, true, 2U, 2U, 0U, 1U, 6U)) == StepResult::Executed,
           "SUBS X6, X1, W2, UXTW");
-    check(extended_alu.x[6] == 11U && extended_alu.c && !extended_alu.z,
-          "extended SUBS updates arithmetic flags");
+    check(extended_alu.x[6] == 11U && !extended_alu.c && !extended_alu.z,
+          "extended SUBS updates arithmetic flags including unsigned borrow");
 
     CpuState pair_cpu{};
     pair_cpu.pc = 0x1500U;
