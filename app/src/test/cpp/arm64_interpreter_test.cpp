@@ -320,7 +320,7 @@ int main() {
     const auto mod0_rwx=MemoryPermission::Read|MemoryPermission::Write|MemoryPermission::Execute;
     check(mod0_memory.map(0x600000U,GuestMemory::kPageSize*4U,mod0_rwx),
           "map synthetic MOD0 image");
-    check(mod0_memory.write32(0x600004U,0xFCU),"write MOD0 relative pointer");
+    check(mod0_memory.write32(0x600004U,0x100U),"write MOD0 relative pointer");
     const uint64_t mod0_address=0x600100U;
     const char mod0_magic[]={'M','O','D','0'};
     check(mod0_memory.write(mod0_address,mod0_magic,sizeof(mod0_magic)),"write MOD0 magic");
