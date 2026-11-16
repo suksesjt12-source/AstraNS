@@ -15,21 +15,38 @@ void check(bool condition, const char* message) {
 int main() {
     using astrans::CpuState;
     using astrans::GuestMemory;
+    using astrans::MemoryPermission;
     using astrans::StepResult;
     using astrans::execute_one;
     using astrans::run;
 
-    GuestMemory memory(0x1000U, 0x1000U);
-    check(memory.write64(0x1800U, 0x1122334455667788ULL), "memory write64");
+    GuestMemory memory;
+    const auto code_rw = MemoryPermission::Read | MemoryPermission::Write | MemoryPermission::Execute;
+    const auto data_rw = MemoryPermission::Read | MemoryPermission::Write;
+    check(memory.map(0x1000U, GuestMemory::kPageSize, code_rw), "map code page");
+    check(memory.map(0x2000U, GuestMemory::kPageSize, data_rw), "map data page");
+    check(!memory.map(0x1000U, GuestMemory::kPageSize, code_rw), "reject overlapping mapping");
+    check(!memory.map(0x3100U, GuestMemory::kPageSize, code_rw), "reject unaligned mapping");
+    check(memory.write64(0x2800U, 0x1122334455667788ULL), "memory write64");
     uint64_t memory_value = 0;
-    check(memory.read64(0x1800U, memory_value), "memory read64");
+    check(memory.read64(0x2800U, memory_value), "memory read64");
     check(memory_value == 0x1122334455667788ULL, "memory is little endian");
-    check(!memory.read64(0x1FFCU, memory_value), "memory rejects out-of-range read");
-    check(!memory.write32(0x0FFEU, 0U), "memory rejects address below base");
+    check(!memory.read64(0x2FFCU, memory_value), "memory rejects out-of-range read");
+    check(!memory.write32(0x0FFEU, 0U), "memory rejects address below mapping");
+    check(memory.write32(0x1000U, 0xD503201FU), "write guest code before protecting page");
+    uint32_t fetched = 0;
+    check(memory.fetch32(0x1000U, fetched) && fetched == 0xD503201FU, "executable page can be fetched");
+    check(memory.protect(0x1000U, GuestMemory::kPageSize,
+                         MemoryPermission::Read | MemoryPermission::Execute),
+          "protect code page as read-execute");
+    check(!memory.write32(0x1000U, 0U), "read-execute page blocks writes");
+    check(memory.fetch32(0x1000U, fetched), "read-execute page still fetches");
+    check(!memory.fetch32(0x2000U, fetched), "non-executable data page blocks instruction fetch");
+    check(memory.protect(0x1000U, GuestMemory::kPageSize, code_rw), "restore code test page permissions");
 
     CpuState cpu{};
     cpu.pc = 0x1000U;
-    cpu.x[1] = 0x1800U;
+    cpu.x[1] = 0x2800U;
     check(execute_one(cpu, memory, 0xD28000E0U) == StepResult::Executed, "MOVZ X0, #7");
     check(cpu.x[0] == 7U && cpu.pc == 0x1004U, "MOVZ writes register and advances PC");
     check(execute_one(cpu, memory, 0x91001400U) == StepResult::Executed, "ADD X0, X0, #5");
@@ -76,7 +93,7 @@ int main() {
     check(loop.instructions_executed == 4U && loop.pc == 0x1000U, "branch loop state");
 
     CpuState fault{};
-    fault.pc = 0x3000U;
+    fault.pc = 0x4000U;
     check(run(fault, memory, 2U) == StepResult::MemoryFault,
           "fetch outside guest memory faults safely");
 
@@ -85,6 +102,6 @@ int main() {
     check(execute_one(bad, memory, 0xFFFFFFFFU) == StepResult::Unsupported, "unknown opcode rejected");
     check(astrans::run_self_test() == 12, "integrated guest program passes");
 
-    std::cout << "AstraNS memory + AArch64 execution tests: PASS\n";
+    std::cout << "AstraNS mapped guest memory + AArch64 tests: PASS\n";
     return EXIT_SUCCESS;
 }
