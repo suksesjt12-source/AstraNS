@@ -9,6 +9,7 @@ import android.widget.TextView
 
 class MainActivity : Activity() {
     private external fun nativeRunSelfTest(): Int
+    private external fun nativeVulkanInfo(): String
 
     companion object {
         init { System.loadLibrary("astrans_core") }
@@ -28,8 +29,8 @@ class MainActivity : Activity() {
                 textSize = size
                 setTextColor(color)
                 gravity = Gravity.CENTER
+                setPadding(0, 8, 0, 8)
                 if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-                setPadding(0, 10, 0, 10)
             }
 
         root.addView(label("AstraNS", 34f, Color.WHITE, true))
@@ -43,14 +44,20 @@ class MainActivity : Activity() {
             onFailure = { "Native core error: ${it.message}" }
         )
         root.addView(label(testText, 16f, if (result.getOrNull() == 12) Color.GREEN else Color.YELLOW, true))
+
+        val gpuInfo = runCatching { nativeVulkanInfo() }
+            .getOrElse { "Vulkan probe failed: ${it.message}" }
+        root.addView(label("GPU / Vulkan diagnostic", 16f, Color.WHITE, true))
+        root.addView(label(gpuInfo, 12f, Color.rgb(190, 205, 225)))
+
         root.addView(label(
-            "Milestone 0.4: mapped guest memory + bounded AArch64 execution. " +
+            "Milestone 0.5: mapped guest memory, bounded AArch64 execution and Vulkan capability probe. " +
                 "This is not yet a Nintendo Switch emulator and cannot run commercial games.",
-            14f, Color.LTGRAY
+            13f, Color.LTGRAY
         ))
         root.addView(label(
-            "Next: MMU/page tables, privileged CPU state, SIMD/NEON, system services and GPU translation.",
-            13f, Color.rgb(160, 180, 210)
+            "Next: ARM MMU/page tables, SIMD/NEON, Switch system services and a GPU translation backend.",
+            12f, Color.rgb(160, 180, 210)
         ))
         setContentView(root)
     }
