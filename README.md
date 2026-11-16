@@ -2,31 +2,33 @@
 
 AstraNS is an original Android-first emulator research project. The Android shell is Kotlin; the experimental guest CPU and memory core is C++20.
 
-## Current status: 0.3.0 — guest execution foundation
+## Current status: 0.4.0 — mapped guest memory foundation
 
 Implemented:
-- Native Android application shell and JNI bridge.
-- A bounded guest-memory region with checked reads/writes and little-endian 32/64-bit access.
-- A guest fetch/decode/execute loop with an instruction budget and stop-address support for deterministic tests.
-- A small AArch64 instruction subset: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate with basic NZCV flags; unsigned-immediate integer LDR/STR for byte, halfword, word and doubleword; B, BL, B.cond and RET.
-- Automated host tests for guest-memory bounds, register operations, load/store, branch/link/return, instruction budgets, and unsupported opcodes.
-- GitHub Actions that run native tests, then build and upload the arm64-v8a debug APK.
+- Android application shell and JNI bridge.
+- Page-aligned guest memory regions with overlap checks and independent Read, Write and Execute permissions.
+- Permission changes for a mapped region, including changing a code page from writable during loading to read/execute for guest instruction fetch.
+- Checked guest-memory access and little-endian 32/64-bit reads and writes.
+- A bounded fetch/decode/execute loop with instruction budget and deterministic stop-address support.
+- Limited AArch64 support: NOP; MOVZ/MOVN/MOVK; ADD/SUB immediate with basic NZCV flags; unsigned-immediate integer LDR/STR for byte, halfword, word and doubleword; B, BL, B.cond and RET.
+- Host tests covering memory mapping, overlap and alignment rejection, access permissions, register operations, loads/stores, branches, instruction budgets and faults.
+- GitHub Actions that run native tests before building an arm64-v8a debug APK.
 
 ## Important limitations
 
-**AstraNS is not yet a Nintendo Switch emulator and cannot run Hollow Knight or other Switch games.** This milestone executes only a limited subset of AArch64 instructions in a test guest-memory region. It has no Switch boot process or Horizon OS compatibility.
+**AstraNS is not yet a Nintendo Switch emulator and cannot run Hollow Knight or other Switch games.** The current memory regions are a basic guest address-space abstraction, not a complete ARM MMU or Switch memory manager.
 
 Not implemented:
-- Full ARMv8-A instruction coverage, SIMD/NEON, FP, atomics, exceptions, MMU, page tables, or JIT.
-- Switch kernel and system services, IPC, filesystem interfaces or required runtime libraries.
+- Full ARMv8-A instruction coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, page tables or JIT.
+- Switch boot process, kernel and system services, IPC, filesystem interfaces or required runtime libraries.
 - Tegra X1 GPU command processor, Maxwell features, shader translation or Vulkan renderer.
-- Audio, controller input, save data, game loader or commercial game compatibility.
+- Audio, controller input, title loader, save data or commercial game compatibility.
 
 ## Build APK
 
-Every push to `main` triggers the Android APK workflow. Pull requests run the native test suite. You can also run the workflow manually from the repository's **Actions** tab.
+Every push to `main` triggers the Android APK workflow. Pull requests run native tests. You can also start the workflow manually from the repository's **Actions** tab.
 
-When the workflow succeeds:
+After a successful run:
 1. Open **Actions**.
 2. Select the latest successful **Android APK** run.
 3. Open **Artifacts**.
@@ -42,7 +44,7 @@ The debug APK is for development/testing, not a Play Store release. It targets 6
 - CMake 3.22.1
 - Gradle 8.9
 
-Run:
+Build from the repository root:
 
 ```bash
 gradle assembleDebug
@@ -61,14 +63,13 @@ g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
 
 ## Roadmap toward compatibility
 
-1. Expand and validate AArch64 instruction behavior, including SIMD/NEON and exceptions.
-2. Add a guest virtual address space, page permissions and memory mapping abstractions.
-3. Add privileged CPU state and a system exception/interrupt model.
-4. Design Horizon-compatible kernel objects and IPC only from public, lawful specifications.
-5. Build a GPU command translation architecture and validate Vulkan capabilities on target devices.
-6. Add audio, controller, storage and save-state systems.
-7. Assess title compatibility only after system boot and graphics fundamentals work.
+1. Expand and validate AArch64 behavior, including SIMD/NEON, atomics, exceptions and exact architectural edge cases.
+2. Build proper address translation, page tables, MMU permissions, exception levels and interrupt state.
+3. Implement a Switch-like kernel/service and IPC compatibility layer from public, lawful specifications.
+4. Build a GPU command-translation architecture and shader pipeline; validate Vulkan support on Mali-class devices.
+5. Add filesystem, audio, controller, timing and save-state systems.
+6. Test boot and compatibility with software the user is legally authorized to use; only then assess individual game support.
 
 ## Legal scope
 
-AstraNS includes no Nintendo firmware, cryptographic keys, proprietary system files, or commercial game data. Use only software and system data you are legally authorized to use. This project does not provide instructions for bypassing DRM or obtaining protected files.
+AstraNS includes no Nintendo firmware, cryptographic keys, proprietary system files or commercial game data. Use only software and system data you are legally authorized to use. This project does not provide instructions for bypassing DRM or obtaining protected files.
