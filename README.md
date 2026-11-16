@@ -21,7 +21,7 @@ Implemented:
 
 ## Important limitations
 
-**AstraNS cannot launch Nintendo Switch games yet.** The NRO loader currently maps uncompressed homebrew binaries only; it does not implement MOD0 relocations/import resolution, the Switch runtime, Horizon services, commercial package handling, or GPU rendering. The library can import and catalogue user-selected files, but the title loader, Horizon services, complete CPU support and graphics rendering are not implemented. The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
+**AstraNS cannot launch Nintendo Switch games yet.** The NRO loader currently maps uncompressed homebrew binaries only; it does not implement MOD0 relocations/import resolution, the Switch runtime, Horizon services, commercial package handling, or GPU rendering. The library can import and catalogue user-selected files, but commercial package parsing, MOD0 relocation/import resolution, Horizon services, full CPU support and graphics rendering are not implemented. The Vulkan component is only a hardware capability probe. It does not render graphics or translate NVIDIA Tegra/Maxwell GPU commands.
 
 Not implemented:
 - Full ARMv8-A coverage, SIMD/NEON, floating-point, atomics, exceptions, privileged state, hardware-format ARM translation tables/TLB and JIT. The current software page map is not an ARM hardware MMU.

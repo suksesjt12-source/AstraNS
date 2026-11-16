@@ -1,6 +1,7 @@
 #include "arm64_interpreter.h"
 #include "guest_address_space.h"
 #include "nro_loader.h"
+#include "nso_loader.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -58,6 +59,14 @@ uint32_t encode_adr(bool page_relative, int64_t immediate, unsigned rd) {
     return (page_relative ? 0x90000000U : 0x10000000U) |
            (static_cast<uint32_t>((imm & 0x3U) << 29U)) |
            (static_cast<uint32_t>(((imm >> 2U) & 0x7FFFFU) << 5U)) | rd;
+}
+uint8_t hex_byte(char a, char b) {
+    auto digit=[](char c)->uint8_t {
+        if(c>='0'&&c<='9') return static_cast<uint8_t>(c-'0');
+        if(c>='a'&&c<='f') return static_cast<uint8_t>(c-'a'+10);
+        return static_cast<uint8_t>(c-'A'+10);
+    };
+    return static_cast<uint8_t>((digit(a)<<4U)|digit(b));
 }
 void write_u32_le(std::vector<uint8_t>& data, std::size_t offset, uint32_t value) {
     data[offset] = static_cast<uint8_t>(value);
@@ -305,6 +314,67 @@ int main() {
                              0x200000U, loaded_nro, nro_error) &&
           nro_error == astrans::NroLoadError::CompressedNroUnsupported,
           "NRO loader explicitly rejects compressed images");
+
+    std::vector<uint8_t> nso_file(0x2114U,0U);
+    nso_file[0]='N'; nso_file[1]='S'; nso_file[2]='O'; nso_file[3]='0';
+    write_u32_le(nso_file,0x0CU,0x09U);
+    write_u32_le(nso_file,0x10U,0x100U);
+    write_u32_le(nso_file,0x14U,0x0000U);
+    write_u32_le(nso_file,0x18U,0x1000U);
+    write_u32_le(nso_file,0x20U,0x114U);
+    write_u32_le(nso_file,0x24U,0x1000U);
+    write_u32_le(nso_file,0x28U,0x1000U);
+    write_u32_le(nso_file,0x30U,0x1114U);
+    write_u32_le(nso_file,0x34U,0x2000U);
+    write_u32_le(nso_file,0x38U,0x1000U);
+    write_u32_le(nso_file,0x3CU,0x80U);
+    write_u32_le(nso_file,0x60U,20U);
+    write_u32_le(nso_file,0x64U,0x1000U);
+    write_u32_le(nso_file,0x68U,0x1000U);
+    std::size_t lz=0x100U;
+    nso_file[lz++]=0x1FU; nso_file[lz++]='A'; nso_file[lz++]=1U; nso_file[lz++]=0U;
+    for(unsigned i=0;i<15U;++i) nso_file[lz++]=0xFFU;
+    nso_file[lz++]=0xFBU;
+    std::fill(nso_file.begin()+0x114,nso_file.begin()+0x1114,0xA5U);
+    std::fill(nso_file.begin()+0x1114,nso_file.end(),0x5AU);
+    const char expected_text_hash[]="6896d9ea3f73a4434f5832bc65714e7d066f177373f36f34dc8a6f735daa41b1";
+    for(unsigned i=0;i<32U;++i)
+        nso_file[0xA0U+i]=hex_byte(expected_text_hash[i*2U],expected_text_hash[i*2U+1U]);
+
+    GuestMemory nso_memory;
+    astrans::LoadedNso loaded_nso{};
+    astrans::NsoLoadError nso_error=astrans::NsoLoadError::None;
+    check(astrans::load_nso(nso_memory,nso_file.data(),nso_file.size(),0x400000U,
+                            loaded_nso,nso_error),
+          "load NSO with LZ4 text and requested SHA-256 validation");
+    check(nso_error==astrans::NsoLoadError::None,"NSO loader success status");
+    check(loaded_nso.entry_point==0x400000U&&loaded_nso.bss_start==0x403000U,
+          "NSO entry point and BSS boundaries");
+    check(nso_memory.fetch32(0x400000U,fetched)&&fetched==0x41414141U,
+          "NSO LZ4 text is decompressed to executable guest memory");
+    check(nso_memory.read(0x401000U,&fetched,1U)&&(fetched&0xFFU)==0xA5U,
+          "NSO read-only data is copied");
+    check(!nso_memory.write32(0x401000U,0U),"NSO rodata permission is read-only");
+    check(nso_memory.read(0x402000U,&fetched,1U)&&(fetched&0xFFU)==0x5AU,
+          "NSO data is copied");
+    check(nso_memory.write32(0x402000U,0x76543210U),"NSO data permission is writable");
+    bss_zero=1U;
+    check(nso_memory.read64(0x403000U,bss_zero)&&bss_zero==0U,
+          "NSO BSS is zero initialized");
+
+    std::vector<uint8_t> bad_hash_nso=nso_file;
+    bad_hash_nso[0xA0U]^=0xFFU;
+    GuestMemory bad_hash_memory;
+    check(!astrans::load_nso(bad_hash_memory,bad_hash_nso.data(),bad_hash_nso.size(),
+                             0x500000U,loaded_nso,nso_error)&&
+          nso_error==astrans::NsoLoadError::HashMismatch,
+          "NSO bad SHA-256 is rejected before guest mapping");
+    std::vector<uint8_t> zstd_nso=nso_file;
+    write_u32_le(zstd_nso,0x0CU,0x89U);
+    check(!astrans::load_nso(bad_hash_memory,zstd_nso.data(),zstd_nso.size(),
+                             0x500000U,loaded_nso,nso_error)&&
+          nso_error==astrans::NsoLoadError::UnsupportedCompression,
+          "NSO Zstandard compression is reported as unsupported");
 
     CpuState multiply_cpu{};
     multiply_cpu.pc = 0x1780U;
