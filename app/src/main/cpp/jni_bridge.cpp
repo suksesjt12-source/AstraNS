@@ -5,6 +5,7 @@
 #include <exception>
 #include <mutex>
 #include <memory>
+#include <utility>
 #include <sstream>
 #include <string>
 #include <vector>
