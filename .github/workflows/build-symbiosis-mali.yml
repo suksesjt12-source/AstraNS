@@ -43,6 +43,16 @@ jobs:
           path: symbiosis
           fetch-depth: 1
 
+      - name: Apply AstraNS compatibility overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d project/patch ]; then
+            cp -a project/patch/. symbiosis/patch/
+          fi
+          test -f symbiosis/patch/android/utils/GameHelper.kt
+          echo "AstraNS NSP library compatibility overlay installed."
+
       - name: Check out pinned Eden emulator core
         shell: bash
         run: |
@@ -78,8 +88,10 @@ jobs:
           set -euo pipefail
           grep -q "Mali-G57 MC2" symbiosis/README.md
           grep -q '"nsp"' symbiosis/patch/android/utils/GameFormats.kt
+          grep -q 'GameFormats.LAUNCHABLE.contains(extension)' symbiosis/patch/android/utils/GameHelper.kt
+          grep -q 'metadataValid' symbiosis/patch/android/utils/GameHelper.kt
           grep -q "Mali" symbiosis/patch/symbiosis/device_profiles.cpp
-          echo "Symbiosis target profile and NSP import declaration found."
+          echo "Symbiosis Mali profile and NSP import/diagnostic path verified."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
