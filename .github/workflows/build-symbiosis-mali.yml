@@ -162,7 +162,7 @@ jobs:
           content = manifest.read_text(encoding="utf-8")
           if "android:localeConfig=" not in content:
               content, count = re.subn(
-                  r"<application\\b",
+                  r"<application\b",
                   '<application android:localeConfig="@xml/locales_config"',
                   content,
                   count=1,
