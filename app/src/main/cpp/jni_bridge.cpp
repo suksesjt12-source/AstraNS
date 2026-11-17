@@ -4,6 +4,7 @@
 #include <cstring>
 #include <exception>
 #include <mutex>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -11,6 +12,10 @@
 #include "arm64_interpreter.h"
 #include "nro_loader.h"
 #include "nso_loader.h"
+#include "nro_assets.h"
+#include "romfs.h"
+#include "fsp_srv.h"
+#include "hipc_cmif.h"
 #include "vulkan_probe.h"
 
 namespace {
@@ -21,6 +26,10 @@ constexpr uint64_t kInitialGuestBase = 0x10000000ULL;
 astrans::GuestMemory g_guest_memory;
 std::mutex g_guest_memory_mutex;
 uint64_t g_next_guest_base = kInitialGuestBase;
+std::shared_ptr<astrans::RomFsImage> g_romfs_image;
+astrans::FspSrv g_fsp_srv;
+astrans::CmifServiceManager g_cmif_services;
+bool g_fsp_srv_registered = false;
 
 const char* nro_error_name(astrans::NroLoadError error) noexcept {
     using astrans::NroLoadError;
@@ -69,6 +78,87 @@ bool advance_guest_base(uint64_t image_size) noexcept {
         g_next_guest_base + span > UINT64_MAX - guard_size) return false;
     g_next_guest_base += span + guard_size;
     return true;
+}
+
+const char* asset_error_name(astrans::NroAssetError error) noexcept {
+    using astrans::NroAssetError;
+    switch (error) {
+        case NroAssetError::None: return "None";
+        case NroAssetError::NullInput: return "NullInput";
+        case NroAssetError::TruncatedNro: return "TruncatedNro";
+        case NroAssetError::BadNroMagic: return "BadNroMagic";
+        case NroAssetError::InvalidNroSize: return "InvalidNroSize";
+        case NroAssetError::NoAssetHeader: return "NoAssetHeader";
+        case NroAssetError::TruncatedAssetHeader: return "TruncatedAssetHeader";
+        case NroAssetError::BadAssetMagic: return "BadAssetMagic";
+        case NroAssetError::UnsupportedAssetVersion: return "UnsupportedAssetVersion";
+        case NroAssetError::MissingRomFs: return "MissingRomFs";
+        case NroAssetError::InvalidRomFsRange: return "InvalidRomFsRange";
+        case NroAssetError::RomFsTooLarge: return "RomFsTooLarge";
+    }
+    return "Unknown";
+}
+
+const char* romfs_error_name(astrans::RomFsError error) noexcept {
+    using astrans::RomFsError;
+    switch (error) {
+        case RomFsError::None: return "None";
+        case RomFsError::NullInput: return "NullInput";
+        case RomFsError::TooSmall: return "TooSmall";
+        case RomFsError::UnsupportedIvfc: return "UnsupportedIvfc";
+        case RomFsError::InvalidHeader: return "InvalidHeader";
+        case RomFsError::InvalidTableRange: return "InvalidTableRange";
+        case RomFsError::InvalidEntry: return "InvalidEntry";
+        case RomFsError::InvalidPath: return "InvalidPath";
+        case RomFsError::NotFound: return "NotFound";
+        case RomFsError::NotDirectory: return "NotDirectory";
+        case RomFsError::IsDirectory: return "IsDirectory";
+        case RomFsError::ReadLimitExceeded: return "ReadLimitExceeded";
+        case RomFsError::InvalidOffset: return "InvalidOffset";
+        case RomFsError::TooManyEntries: return "TooManyEntries";
+    }
+    return "Unknown";
+}
+
+std::string mount_romfs_from_nro(const uint8_t* bytes, std::size_t size) {
+    g_romfs_image.reset();
+    g_fsp_srv.set_image(nullptr);
+
+    std::vector<uint8_t> romfs_bytes;
+    astrans::NroAssetInfo asset_info{};
+    astrans::NroAssetError asset_error = astrans::NroAssetError::None;
+    if (!astrans::extract_nro_romfs(bytes, size, romfs_bytes,
+                                    asset_info, asset_error)) {
+        if (asset_error == astrans::NroAssetError::NoAssetHeader ||
+            asset_error == astrans::NroAssetError::MissingRomFs) {
+            return "RomFS asset: this NRO does not contain a RomFS partition.";
+        }
+        return std::string("NRO RomFS extraction failed: ") +
+               asset_error_name(asset_error) + ".";
+    }
+
+    auto image = std::make_shared<astrans::RomFsImage>();
+    astrans::RomFsError romfs_error = astrans::RomFsError::None;
+    if (!image->mount(romfs_bytes.data(), romfs_bytes.size(), romfs_error)) {
+        return std::string("NRO RomFS mount failed: ") +
+               romfs_error_name(romfs_error) + ".";
+    }
+
+    g_romfs_image = std::move(image);
+    g_fsp_srv.set_image(g_romfs_image);
+    if (!g_fsp_srv_registered) {
+        if (!g_fsp_srv.register_with(g_cmif_services)) {
+            g_romfs_image.reset();
+            g_fsp_srv.set_image(nullptr);
+            return "RomFS mounted, but fsp-srv registration failed.";
+        }
+        g_fsp_srv_registered = true;
+    }
+
+    std::ostringstream status;
+    status << "RomFS mounted read-only: " << asset_info.romfs_size
+           << " bytes. fsp-srv registered in the experimental CMIF dispatcher.";
+    return status.str();
 }
 }  // namespace
 
@@ -140,7 +230,8 @@ Java_org_astrans_emulator_MainActivity_nativeLoadHomebrew(JNIEnv* env, jobject,
                    << " bytes; RO: " << loaded.ro_size
                    << " bytes; Data: " << loaded.data_size
                    << " bytes; BSS: " << loaded.bss_size << " bytes.\n"
-                   << "Status: loaded, not booted. This build has no Horizon runtime or game renderer.";
+                   << "Status: image mapped, not booted. This build has no Horizon runtime or game renderer.\n"
+                   << mount_romfs_from_nro(bytes.data(), bytes.size());
         } else {
             const uint32_t bss_size =
                 static_cast<uint32_t>(bytes[0x3CU]) |
@@ -160,6 +251,9 @@ Java_org_astrans_emulator_MainActivity_nativeLoadHomebrew(JNIEnv* env, jobject,
             }
             if (!advance_guest_base(loaded.image_size))
                 return env->NewStringUTF("NSO loaded, but the guest address allocator is exhausted.");
+
+            g_romfs_image.reset();
+            g_fsp_srv.set_image(nullptr);
 
             result << "NSO image loaded into guest memory.\n"
                    << "Guest base: 0x" << std::hex << loaded.base_address << "\n"
