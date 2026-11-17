@@ -2,7 +2,9 @@
 #include "nro_assets.h"
 #include "romfs.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
