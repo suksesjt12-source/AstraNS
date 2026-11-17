@@ -140,6 +140,39 @@ jobs:
             --patch "$GITHUB_WORKSPACE/symbiosis/patch" \
             --eden "$GITHUB_WORKSPACE/eden"
 
+      - name: Add Indonesian and English app languages
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_RES="eden/src/android/app/src/main/res"
+          mkdir -p "$APP_RES/values-id" "$APP_RES/xml"
+
+          python3 symbiosis/tools/merge_strings.py \
+            "$APP_RES/values-id/strings.xml" \
+            "$GITHUB_WORKSPACE/project/patches/locale-id/strings.xml" \
+            "$APP_RES/values-id/strings.xml"
+
+          cp project/patches/locale-id/locales_config.xml "$APP_RES/xml/locales_config.xml"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("eden/src/android/app/src/main/AndroidManifest.xml")
+          content = manifest.read_text(encoding="utf-8")
+          if "android:localeConfig=" not in content:
+              content, count = re.subn(
+                  r"<application\\b",
+                  '<application android:localeConfig="@xml/locales_config"',
+                  content,
+                  count=1,
+              )
+              if count != 1:
+                  raise SystemExit("Could not add app language configuration to AndroidManifest.xml")
+              manifest.write_text(content, encoding="utf-8")
+          print("App languages enabled: Indonesian (id) and English (en)")
+          PY
+
       - name: Build Android APK
         shell: bash
         run: |
@@ -189,6 +222,7 @@ jobs:
             echo "- Mali/MediaTek tuning: Symbiosis (pinned commit)"
             echo "- Package format: NSP is listed as launchable by the source loader"
             echo "- ABI: ARM64"
+            echo "- App languages: Indonesian and English (Android app-language setting)"
             echo ""
             echo "This build is not a claim of tested game compatibility or stable performance on Helio G100."
             echo "The Symbiosis project states that it has not been tested on physical Android hardware."
