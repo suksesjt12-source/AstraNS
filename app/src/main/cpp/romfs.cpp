@@ -133,7 +133,6 @@ bool RomFsImage::mount(const uint8_t* image, std::size_t image_size,
 
 void RomFsImage::unmount() noexcept {
     storage_.clear();
-    storage_.shrink_to_fit();
     directory_metadata_offset_ = 0U;
     directory_metadata_size_ = 0U;
     file_metadata_offset_ = 0U;
@@ -219,6 +218,7 @@ bool RomFsImage::parse_file(uint32_t offset, FileRecord& record,
         (name_size != 0U && !valid_name(entry + kFileEntryHeaderSize, name_size)) ||
         (record.sibling != kNoEntry &&
          ((record.sibling & 3U) != 0U || record.sibling >= file_metadata_size_)) ||
+        record.data_offset > std::numeric_limits<uint64_t>::max() - file_data_offset_ ||
         !valid_range(file_data_offset_ + record.data_offset, record.data_size,
                      static_cast<uint64_t>(storage_.size()))) {
         error = RomFsError::InvalidEntry;
