@@ -47,7 +47,7 @@ bool valid_name(const uint8_t* data, std::size_t size) noexcept {
 bool split_path(std::string_view path, std::vector<std::string>& parts) {
     parts.clear();
     if (path.size() > 16384U) return false;
-    if (path.find('\\0') != std::string_view::npos ||
+    if (path.find('\0') != std::string_view::npos ||
         path.find('\\') != std::string_view::npos) return false;
 
     std::size_t cursor = 0U;
@@ -300,7 +300,7 @@ bool RomFsImage::find_file(std::string_view path, FileRecord& record,
         slash == std::string_view::npos ? path : path.substr(slash + 1U);
     if (leaf.empty() || leaf == "." || leaf == ".." ||
         leaf.size() > kMaximumNameLength ||
-        leaf.find('\\0') != std::string_view::npos ||
+        leaf.find('\0') != std::string_view::npos ||
         leaf.find('\\') != std::string_view::npos) {
         error = RomFsError::InvalidPath;
         return false;
