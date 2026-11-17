@@ -2,7 +2,7 @@ name: Build Mali Nintendo Switch Emulator
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
     paths:
       - ".github/workflows/build-symbiosis-mali.yml"
   workflow_dispatch:
