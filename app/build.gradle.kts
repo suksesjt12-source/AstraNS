@@ -12,8 +12,8 @@ android {
         applicationId = "org.astrans.emulator"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.7.0"
+        versionCode = 18
+        versionName = "1.8.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -41,4 +41,8 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
