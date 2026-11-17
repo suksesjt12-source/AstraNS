@@ -2,10 +2,12 @@
 
 AstraNS is an original Android-first Nintendo Switch emulation research project. Its Android interface is Kotlin; its experimental CPU, memory, executable loaders and IPC foundations are C++20.
 
-## Current status: 1.7.0 — homebrew image loading from Android
+## Current status: 1.8.0 — NSP directory inspection and homebrew image loading
 
 Implemented:
 - Android Library and Settings interface with persistent document-picker entries.
+- Read-only NSP PFS0 directory inspection with bounded entry/string-table sizes, filename validation, file-boundary checks and NCA/TIK/CERT inventory. Only the directory is read; encrypted payloads are not opened or decrypted.
+- Kotlin unit tests for valid PFS0 directories, invalid signatures, truncated headers and out-of-range entries.
 - Detail action sends selected NRO0/NSO0 image bytes through JNI into native guest memory.
 - Bounded input size (128 MiB) and BSS size (64 MiB) for the Android homebrew loading path.
 - NRO/NSO segment mapping, MOD0 relative relocation stage, final memory permissions and detailed load/error report.
@@ -23,18 +25,18 @@ Implemented:
 
 Not implemented:
 - Full ARMv8-A, SIMD/NEON, floating point, atomics, exceptions, sysregs, hardware ARM MMU translation tables/TLB, JIT or multicore scheduling.
-- Complete Switch boot chain, NPDM/NACP, full title/package handling, import resolution and the complete dynamic relocation set.
+- Complete Switch boot chain, NPDM/NACP parsing, title metadata extraction from encrypted NCA content, title installation, import resolution and the complete dynamic relocation set.
 - Full HIPC descriptor memory transfers, kernel object semantics, SVC handle lifecycle, the complete TIPC service manager and actual Horizon services.
 - Tegra X1 Maxwell GPU command processor, shader translation and Vulkan rendering.
 - Audio, controller input, filesystem save-data integration, timing and real-game compatibility testing.
 
-Graphics/VSync/FPS/audio settings are preferences only until the corresponding runtime backends exist. The Vulkan module is a hardware probe, not a renderer. Commercial NSP/XCI packages are not supported by this homebrew loader.
+Graphics/VSync/FPS/audio settings are preferences only until the corresponding runtime backends exist. The Vulkan module is a hardware probe, not a renderer. NSP support is directory-inspection-only: NCA content decryption, title metadata extraction, XCI parsing and commercial title launch are not implemented.
 
 ## Build and test
 
-Every push to main triggers the Android APK workflow. The pipeline runs native C++ tests before building the arm64-v8a debug APK. Download the AstraNS-debug-apk artifact from the Artifacts section of the latest successful Actions run.
+Every push to main triggers the Android APK workflow. The pipeline runs native C++ tests and Kotlin PFS0-inspector unit tests before building the arm64-v8a debug APK. Download the AstraNS-debug-apk artifact from the Artifacts section of the latest successful Actions run.
 
-Local requirements: JDK 17, Android SDK Platform 35, NDK 27.0.12077973, CMake 3.22.1 and Gradle 8.9. The GitHub Actions workflow runs the native tests automatically.
+Local requirements: JDK 17, Android SDK Platform 35, NDK 27.0.12077973, CMake 3.22.1 and Gradle 8.9. The GitHub Actions workflow runs both native and Kotlin unit tests automatically.
 
 ## Legal scope
 
