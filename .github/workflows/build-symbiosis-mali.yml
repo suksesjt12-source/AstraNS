@@ -1,0 +1,198 @@
+name: Build Mali Nintendo Switch Emulator
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-symbiosis-mali.yml"
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: APK type
+        type: choice
+        options:
+          - debug
+          - release
+        default: debug
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: symbiosis-mali-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Symbiosis / Eden for Mali (ARM64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+        with:
+          path: project
+
+      - name: Checkout pinned Symbiosis source
+        uses: actions/checkout@v4
+        with:
+          repository: sj0404-collab/symbiosis
+          ref: bbc102242633a966f86d74892a9589ec121cab78
+          path: symbiosis
+          fetch-depth: 1
+
+      - name: Check out pinned Eden emulator core
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="58c1e20ee58efa3900ba616207d460886214480b"
+          ok=0
+          for attempt in 1 2 3; do
+            if git clone --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden 2>clone.log; then
+              ok=1
+              break
+            fi
+            echo "Eden upstream clone attempt ${attempt} failed:"
+            tail -n 5 clone.log || true
+            rm -rf eden
+            sleep $((attempt * 8))
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "::warning::Primary Eden source unavailable; trying the v0.2.1 mirror."
+            git clone --branch v0.2.1 https://github.com/sj0404-collab/eden-upstream-reference.git eden
+          fi
+
+          actual="$(git -C eden rev-parse HEAD)"
+          echo "Eden source commit: $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Unexpected Eden source revision. Expected $expected."
+            exit 1
+          fi
+
+      - name: Verify target profile and NSP support in source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "Mali-G57 MC2" symbiosis/README.md
+          grep -q '"nsp"' symbiosis/patch/android/utils/GameFormats.kt
+          grep -q "Mali" symbiosis/patch/symbiosis/device_profiles.cpp
+          echo "Symbiosis target profile and NSP import declaration found."
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.31.6"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools ccache
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-symbiosis-${{ runner.os }}-${{ hashFiles('symbiosis/patch/**') }}
+          restore-keys: |
+            gradle-symbiosis-${{ runner.os }}-
+
+      - name: Cache native C++ objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-symbiosis-v0.2.1-${{ inputs.build_type || 'debug' }}-${{ hashFiles('symbiosis/patch/upstream_changes.patch', 'symbiosis/patch/native_symbiosis.cpp') }}
+          restore-keys: |
+            ccache-symbiosis-v0.2.1-${{ inputs.build_type || 'debug' }}-
+
+      - name: Configure ccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.cache/ccache"
+          ccache --set-config=max_size=3G
+          ccache --set-config=base_dir="$GITHUB_WORKSPACE"
+          ccache --set-config=hash_dir=false
+          ccache --set-config=compiler_check=content
+          ccache --zero-stats
+
+      - name: Apply Mali and Android integration patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash symbiosis/tools/apply_patch.sh \
+            --patch "$GITHUB_WORKSPACE/symbiosis/patch" \
+            --eden "$GITHUB_WORKSPACE/eden"
+
+      - name: Build Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          TYPE="${{ inputs.build_type || 'debug' }}"
+          CCACHE_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+          cd eden/src/android
+
+          if [ "$TYPE" = "release" ]; then
+            ./gradlew assembleLegacyRelease \
+              -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+              --parallel --build-cache --max-workers="$(nproc)"
+          else
+            ./gradlew assembleLegacyDebug \
+              -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+              --parallel --build-cache --max-workers="$(nproc)"
+          fi
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+          find eden/src/android/app/build/outputs/apk -type f -name "*.apk" -print
+          APK="$(find eden/src/android/app/build/outputs/apk -type f -name "*.apk" | head -n 1)"
+          test -n "$APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "Built APK: $APK"
+          echo "Size: $(du -h "$APK" | cut -f1)"
+          sha256sum "$APK" | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Symbiosis-Mali-ARM64-${{ inputs.build_type || 'debug' }}
+          path: eden/src/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Symbiosis Mali emulator build"
+            echo ""
+            echo "- Emulator core: Eden v0.2.1 (pinned commit)"
+            echo "- Mali/MediaTek tuning: Symbiosis (pinned commit)"
+            echo "- Package format: NSP is listed as launchable by the source loader"
+            echo "- ABI: ARM64"
+            echo ""
+            echo "This build is not a claim of tested game compatibility or stable performance on Helio G100."
+            echo "The Symbiosis project states that it has not been tested on physical Android hardware."
+            echo "No Nintendo games, firmware, or cryptographic keys are included."
+            echo ""
+            ccache --show-stats 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
