@@ -2,6 +2,7 @@ package org.astrans.emulator
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.ProgressDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.database.Cursor
@@ -74,7 +75,7 @@ class MainActivity : Activity() {
         brand.addView(label("AstraNS", 20f, white, true))
         brand.addView(label("SWITCH EMULATOR WORKSPACE", 9f, muted, true))
         header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(label("1.7", 11f, muted, true).apply {
+        header.addView(label("1.8", 11f, muted, true).apply {
             background = rounded(raised, 18)
             setPadding(dp(12), dp(7), dp(12), dp(7))
         })
@@ -176,9 +177,16 @@ class MainActivity : Activity() {
         ).apply { setPadding(0, dp(4), 0, dp(5)) })
         val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         val isHomebrewBinary = extension == "nro" || extension == "nso"
+        val isNspPackage = extension == "nsp"
+        val statusText = when {
+            isNspPackage -> "NSP PACKAGE  ·  PFS0 INSPECTION"
+            isHomebrewBinary -> "HOMEBREW BINARY  ·  LOADABLE TO MEMORY"
+            else -> "IMPORTED  ·  FORMAT NOT INSPECTED"
+        }
         details.addView(label(
-            if (isHomebrewBinary) "HOMEBREW BINARY  ·  LOADABLE" else "IMPORTED  ·  FORMAT NOT LOADED",
-            9f, if (isHomebrewBinary) green else amber, true
+            statusText, 9f,
+            if (isHomebrewBinary) green else if (isNspPackage) blue else amber,
+            true
         ))
         row.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(label("›", 25f, muted, true))
@@ -197,18 +205,38 @@ class MainActivity : Activity() {
 
     private fun gameInfo(uri: Uri) {
         val name = fileName(uri)
-        AlertDialog.Builder(this)
-            .setTitle(name)
-            .setMessage(
-                "File: " + name + "\nSize: " + fileSize(uri) +
-                "\n\nThis file is saved in your AstraNS library. The current core does not yet " +
-                "include the Switch title loader, Horizon system services or graphics renderer. " +
-                "It cannot launch this game yet."
-            )
-            .setNegativeButton("Load to guest memory") { _, _ -> loadHomebrew(uri) }
-            .setPositiveButton("Close", null)
-            .setNeutralButton("Remove") { _, _ -> removeGame(uri) }
-            .show()
+        val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val dialog = AlertDialog.Builder(this).setTitle(name)
+
+        when (extension) {
+            "nsp" -> {
+                dialog.setMessage(
+                    "NSP package selected. AstraNS can validate its PFS0 directory and list " +
+                        "container entry names and sizes. It does not decrypt NCA files, extract " +
+                        "protected content, identify the game title from encrypted data, or launch games."
+                )
+                dialog.setNegativeButton("Inspect package") { _, _ -> inspectNsp(uri) }
+            }
+            "nro", "nso" -> {
+                dialog.setMessage(
+                    "This is a homebrew executable image. AstraNS can validate and map supported " +
+                        "NRO0/NSO0 images into guest memory, but it cannot boot the Horizon runtime " +
+                        "or run the application yet."
+                )
+                dialog.setNegativeButton("Load to guest memory") { _, _ -> loadHomebrew(uri) }
+            }
+            else -> {
+                dialog.setMessage(
+                    "File: $name\nSize: ${fileSize(uri)}\n\n" +
+                        "This file is catalogued in the AstraNS library, but its format is not supported " +
+                        "by the current inspection or homebrew loading tools."
+                )
+            }
+        }
+
+        dialog.setPositiveButton("Close", null)
+        dialog.setNeutralButton("Remove") { _, _ -> removeGame(uri) }
+        dialog.show()
     }
 
     private fun loadHomebrew(uri: Uri) {
@@ -304,6 +332,59 @@ class MainActivity : Activity() {
             cursor?.close()
         }
         return name
+    }
+
+    private fun inspectNsp(uri: Uri) {
+        val progress = ProgressDialog(this).apply {
+            setMessage("Validating NSP package directory…")
+            setCancelable(false)
+            show()
+        }
+        Thread {
+            val result = try {
+                val archiveSize = fileSizeBytes(uri)
+                    ?: throw IllegalStateException("The selected document provider did not report the package size.")
+                val report = contentResolver.openInputStream(uri)?.use { input ->
+                    Pfs0Inspector.inspect(input, archiveSize)
+                } ?: throw IllegalStateException("Android could not open the selected NSP file.")
+                report.toDisplayText()
+            } catch (error: Exception) {
+                "NSP inspection failed: ${error.message ?: "unknown package error"}"
+            }
+            runOnUiThread {
+                progress.dismiss()
+                AlertDialog.Builder(this)
+                    .setTitle(if (result.startsWith("Format: PFS0")) "NSP directory validated" else "NSP inspection result")
+                    .setMessage(result)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }.start()
+    }
+
+    private fun fileSizeBytes(uri: Uri): Long? {
+        var cursor: Cursor? = null
+        try {
+            cursor = contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            if (cursor != null && cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index >= 0 && !cursor.isNull(index)) {
+                    val size = cursor.getLong(index)
+                    if (size >= 0L) return size
+                }
+            }
+        } catch (_: Exception) {
+            // Fall back to the descriptor length when the provider omits metadata.
+        } finally {
+            cursor?.close()
+        }
+        return try {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.length.takeIf { it >= 0L }
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun fileSize(uri: Uri): String {
