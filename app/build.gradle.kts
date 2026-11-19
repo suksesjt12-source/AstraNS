@@ -26,6 +26,16 @@ android {
         }
     }
 
+    flavorDimensions += "edition"
+    productFlavors {
+        create("switch") { dimension = "edition" }
+        create("pcLauncher") {
+            dimension = "edition"
+            applicationIdSuffix = ".pc"
+            versionNameSuffix = "-pc"
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
@@ -38,7 +48,5 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 }
