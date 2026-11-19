@@ -77,13 +77,13 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
-        run: gradle --no-daemon clean assembleDebug
+      - name: Build PC launcher debug APK
+        run: gradle --no-daemon clean assemblePcLauncherDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AstraNS-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: AstraNS-PC-Launcher-debug-apk
+          path: app/build/outputs/apk/pcLauncher/debug/app-pcLauncher-debug.apk
           if-no-files-found: error
           retention-days: 7
