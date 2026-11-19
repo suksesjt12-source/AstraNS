@@ -32,6 +32,18 @@ jobs:
             -o "$RUNNER_TEMP/astrans-native-tests"
           "$RUNNER_TEMP/astrans-native-tests"
 
+      - name: Compile and run RomFS and fsp-srv tests
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pedantic \
+            -I app/src/main/cpp \
+            app/src/main/cpp/hipc_cmif.cpp \
+            app/src/main/cpp/nro_assets.cpp \
+            app/src/main/cpp/romfs.cpp \
+            app/src/main/cpp/fsp_srv.cpp \
+            app/src/test/cpp/romfs_fsp_srv_test.cpp \
+            -o "$RUNNER_TEMP/astrans-romfs-tests"
+          "$RUNNER_TEMP/astrans-romfs-tests"
+
   build:
     name: Build Android APK
     needs: native-tests
@@ -65,13 +77,13 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
-        run: gradle --no-daemon clean assembleDebug
+      - name: Build PC launcher debug APK
+        run: gradle --no-daemon clean assemblePcLauncherDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AstraNS-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: AstraNS-PC-Launcher-debug-apk
+          path: app/build/outputs/apk/pcLauncher/debug/app-pcLauncher-debug.apk
           if-no-files-found: error
           retention-days: 7

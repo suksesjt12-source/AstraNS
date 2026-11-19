@@ -12,8 +12,8 @@ android {
         applicationId = "org.astrans.emulator"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.7.0"
+        versionCode = 18
+        versionName = "1.8.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -23,6 +23,16 @@ android {
             cmake {
                 cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-Wpedantic")
             }
+        }
+    }
+
+    flavorDimensions += "edition"
+    productFlavors {
+        create("switch") { dimension = "edition" }
+        create("pcLauncher") {
+            dimension = "edition"
+            applicationIdSuffix = ".pc"
+            versionNameSuffix = "-pc"
         }
     }
 
@@ -38,7 +48,5 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 }
