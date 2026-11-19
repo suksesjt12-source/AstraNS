@@ -150,7 +150,7 @@ class PcGameLauncherActivity : Activity() {
                 val entry = zip.nextEntry ?: break
                 entryCount++
                 if (entryCount > MAX_ENTRIES) throw IllegalStateException("Jumlah file ZIP melewati batas keamanan.")
-                val normalized = entry.name.replace('\\\\', '/')
+                val normalized = entry.name.replace('\\', '/')
                 if (normalized.startsWith("/") || normalized.split('/').any { it == ".." } ||
                     Regex("^[A-Za-z]:").containsMatchIn(normalized)) {
                     throw IllegalStateException("Arsip berisi jalur file yang tidak aman.")
